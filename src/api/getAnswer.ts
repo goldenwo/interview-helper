@@ -1,15 +1,27 @@
-import type { ChatMessage } from "../types";
 export type { ChatMessage } from "../types";
+import type { Provider } from "../types";
+
+export interface StreamAnswerParams {
+  messages: { role: "user" | "assistant"; content: string }[];
+  provider: Provider;
+  model: string;
+  apiKey?: string;
+}
 
 export async function streamAnswer(
-  messages: ChatMessage[],
+  params: StreamAnswerParams,
   onToken: (token: string) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch("/api/answer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({
+      messages: params.messages,
+      provider: params.provider,
+      model: params.model,
+      apiKey: params.apiKey,
+    }),
     signal,
   });
 
