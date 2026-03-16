@@ -1,4 +1,5 @@
-export type ChatMessage = { role: "user" | "assistant"; content: string };
+import type { ChatMessage } from "../types";
+export type { ChatMessage } from "../types";
 
 export async function streamAnswer(
   messages: ChatMessage[],
