@@ -2,10 +2,15 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import { fileURLToPath } from "url";
+import path from "path";
 import type { AnswerRequest, Provider, ProviderAdapter } from "./types.js";
 import { openaiAdapter } from "./adapters/openai.js";
 import { anthropicAdapter } from "./adapters/anthropic.js";
 import { googleAdapter } from "./adapters/google.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distPath = path.join(__dirname, "..", "dist");
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
@@ -162,6 +167,12 @@ app.post("/api/answer", async (req, res) => {
       res.end();
     }
   }
+});
+
+// --- Static files (production) ---
+app.use(express.static(distPath));
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
 });
 
 const server = app.listen(PORT, () => {
