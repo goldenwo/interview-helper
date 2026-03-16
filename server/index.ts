@@ -2,7 +2,10 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import OpenAI from "openai";
+import type { AnswerRequest, Provider, ProviderAdapter } from "./types.js";
+import { openaiAdapter } from "./adapters/openai.js";
+import { anthropicAdapter } from "./adapters/anthropic.js";
+import { googleAdapter } from "./adapters/google.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
@@ -11,14 +14,11 @@ const MAX_CONCURRENT_PER_IP = 2;
 
 // --- Security middleware ---
 
-// Restrict CORS to the frontend origin
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? "http://localhost:5173";
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 
-// Body size limit — conversation history can grow, but cap it
 app.use(express.json({ limit: "50kb" }));
 
-// Rate limit: 10 requests per minute per IP
 app.use(
   "/api/",
   rateLimit({
@@ -29,19 +29,6 @@ app.use(
     message: { error: "Too many requests, please wait a moment" },
   })
 );
-
-// Optional bearer token auth (set API_SECRET in .env to enable)
-const API_SECRET = process.env.API_SECRET;
-if (API_SECRET) {
-  app.use("/api/", (req, res, next) => {
-    const token = req.headers.authorization?.replace("Bearer ", "");
-    if (token !== API_SECRET) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    next();
-  });
-}
 
 // Per-IP concurrency throttle
 const inFlight = new Map<string, number>();
@@ -61,9 +48,19 @@ app.use("/api/", (req, res, next) => {
   next();
 });
 
-// --- OpenAI setup ---
+// --- Provider adapters ---
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const adapters: Record<Provider, ProviderAdapter> = {
+  openai: openaiAdapter,
+  anthropic: anthropicAdapter,
+  google: googleAdapter,
+};
+
+const ENV_KEY_MAP: Record<Provider, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GOOGLE_API_KEY",
+};
 
 const SYSTEM_PROMPT = `You are the user's voice in a live interview. The user will relay what the interviewer says. Respond with exactly what the user should say back — written in first person as if the user is speaking directly to the interviewer. Do NOT explain things to the user or teach them. Just give them the words to say.
 
@@ -76,19 +73,18 @@ Keep answers concise enough to glance at on a phone. Use plain language, no mark
 
 // --- Routes ---
 
-const MAX_HISTORY_MESSAGES = 10; // keep last 5 Q&A pairs
-
-type ChatMessage = { role: "user" | "assistant"; content: string };
+const MAX_HISTORY_MESSAGES = 10;
+const VALID_PROVIDERS: Provider[] = ["openai", "anthropic", "google"];
 
 app.post("/api/answer", async (req, res) => {
-  const { messages } = req.body as { messages?: ChatMessage[] };
+  const { messages, provider, model, apiKey } = req.body as Partial<AnswerRequest>;
 
+  // Validate messages
   if (!Array.isArray(messages) || messages.length === 0) {
     res.status(400).json({ error: "Missing messages" });
     return;
   }
 
-  // Validate and sanitize messages
   const lastMessage = messages[messages.length - 1];
   if (lastMessage.role !== "user" || !lastMessage.content?.trim()) {
     res.status(400).json({ error: "Last message must be a non-empty user message" });
@@ -96,56 +92,65 @@ app.post("/api/answer", async (req, res) => {
   }
 
   if (lastMessage.content.length > MAX_QUESTION_LENGTH) {
-    res
-      .status(400)
-      .json({ error: `Question too long (max ${MAX_QUESTION_LENGTH} chars)` });
+    res.status(400).json({ error: `Question too long (max ${MAX_QUESTION_LENGTH} chars)` });
     return;
   }
 
-  // Trim history to the most recent exchanges
+  // Validate provider
+  const resolvedProvider: Provider = provider && VALID_PROVIDERS.includes(provider) ? provider : "openai";
+
+  // Validate model (must be a non-empty string)
+  const resolvedModel = typeof model === "string" && model.trim() ? model.trim() : "gpt-4o-mini";
+
+  // Resolve API key: request body → env var → error
+  const resolvedKey = apiKey || process.env[ENV_KEY_MAP[resolvedProvider]];
+  if (!resolvedKey) {
+    res.status(400).json({
+      error: `No API key provided for ${resolvedProvider}. Enter your key in Settings or set ${ENV_KEY_MAP[resolvedProvider]} in .env`,
+    });
+    return;
+  }
+
+  const adapter = adapters[resolvedProvider];
   const trimmed = messages.slice(-MAX_HISTORY_MESSAGES);
 
-  // Abort the OpenAI stream if the client disconnects
+  // Abort if the client disconnects
   const abortController = new AbortController();
   res.on("close", () => abortController.abort());
 
   try {
-    const stream = await openai.chat.completions.create(
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          ...trimmed,
-        ],
-        max_tokens: 512,
-        temperature: 0.4,
-        stream: true,
-      },
-      { signal: abortController.signal }
-    );
+    const tokenStream = adapter.stream({
+      model: resolvedModel,
+      apiKey: resolvedKey,
+      messages: trimmed,
+      systemPrompt: SYSTEM_PROMPT,
+      maxTokens: 512,
+      temperature: 0.4,
+      signal: abortController.signal,
+    });
 
-    // Only set SSE headers after the OpenAI call succeeds, so we can
-    // still return a proper HTTP error status if it fails immediately.
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content;
-      if (delta) res.write(`data: ${JSON.stringify(delta)}\n\n`);
+    for await (const token of tokenStream) {
+      if (abortController.signal.aborted) break;
+      res.write(`data: ${JSON.stringify(token)}\n\n`);
     }
-    res.write("data: [DONE]\n\n");
-    res.end();
+    if (!abortController.signal.aborted) {
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
   } catch (err: unknown) {
-    if (abortController.signal.aborted) return; // client disconnected
-    console.error("OpenAI error:", err);
+    if (abortController.signal.aborted) return;
+    console.error(`${resolvedProvider} error:`, err);
 
     const status = (err as { status?: number }).status;
     const message =
       status === 429
-        ? "OpenAI rate limit or quota exceeded — check your API key billing"
+        ? "Rate limit or quota exceeded — check your API key billing"
         : status === 401
-        ? "Invalid OpenAI API key"
+        ? `Invalid ${resolvedProvider} API key`
         : err instanceof Error
         ? err.message
         : "Failed to get answer";
@@ -163,5 +168,4 @@ const server = app.listen(PORT, () => {
   console.log(`Backend listening on http://localhost:${PORT}`);
 });
 
-// Graceful shutdown
 process.on("SIGTERM", () => server.close());

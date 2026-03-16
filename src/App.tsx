@@ -1,7 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import Recorder from "./components/Recorder";
 import AnswerDisplay from "./components/AnswerDisplay";
-import { streamAnswer, type ChatMessage } from "./api/getAnswer";
+import Sidebar from "./components/Sidebar";
+import { streamAnswer } from "./api/getAnswer";
+import { useSettings } from "./hooks/useSettings";
+import { useChats } from "./hooks/useChats";
+import type { ChatMessage } from "./types";
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -9,14 +13,39 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
 
-  // Auto-scroll to bottom when new content arrives
+  const { settings, setProvider, setModel, setApiKey } = useSettings();
+  const { chats, activeChatId, setActiveChatId, saveChat, loadChat, startNewChat } = useChats();
+  const activeChatIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync
   useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+  }, [activeChatId]);
+
+  // Auto-scroll only when user is at the bottom
+  useEffect(() => {
+    if (!showScrollButton) {
+      const el = mainRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, streamingAnswer, loading, showScrollButton]);
+
+  const handleScroll = useCallback(() => {
     const el = mainRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, streamingAnswer, loading]);
+    if (!el) return;
+    const isNearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
+    setShowScrollButton(!isNearBottom);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = mainRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, []);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -25,92 +54,184 @@ export default function App() {
     setStreaming(false);
   }, []);
 
-  const handleQuestion = useCallback(async (question: string) => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const handleQuestion = useCallback(
+    async (question: string) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    // Add the user message to the chat immediately
-    setMessages((prev) => [...prev, { role: "user", content: question }]);
-    setStreamingAnswer("");
-    setLoading(true);
-    setStreaming(false);
-    setError("");
-
-    let fullAnswer = "";
-
-    try {
-      let first = true;
-      await streamAnswer(
-        // Send current messages + the new question
-        [...messages, { role: "user", content: question }],
-        (token) => {
-          if (first) {
-            setLoading(false);
-            setStreaming(true);
-            first = false;
-          }
-          fullAnswer += token;
-          setStreamingAnswer((prev) => prev + token);
-        },
-        controller.signal
-      );
-
-      // Stream finished — commit the full answer to messages
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: fullAnswer },
-      ]);
+      const newMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+      setMessages(newMessages);
       setStreamingAnswer("");
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setLoading(false);
+      setLoading(true);
       setStreaming(false);
+      setError("");
+
+      let fullAnswer = "";
+
+      try {
+        let first = true;
+        await streamAnswer(
+          {
+            messages: newMessages,
+            provider: settings.provider,
+            model: settings.model,
+            apiKey: settings.apiKeys[settings.provider],
+          },
+          (token) => {
+            if (first) {
+              setLoading(false);
+              setStreaming(true);
+              first = false;
+            }
+            fullAnswer += token;
+            setStreamingAnswer((prev) => prev + token);
+          },
+          controller.signal
+        );
+
+        const finalMessages: ChatMessage[] = [
+          ...newMessages,
+          { role: "assistant", content: fullAnswer },
+        ];
+        setMessages(finalMessages);
+        setStreamingAnswer("");
+
+        // Save to chat history
+        const chatId = saveChat(activeChatIdRef.current, finalMessages);
+        setActiveChatId(chatId);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      } finally {
+        setLoading(false);
+        setStreaming(false);
+      }
+    },
+    [messages, settings, saveChat, setActiveChatId]
+  );
+
+  const handleSelectChat = useCallback(
+    (id: string) => {
+      const chatMessages = loadChat(id);
+      if (chatMessages) {
+        setMessages(chatMessages);
+        setStreamingAnswer("");
+        setError("");
+        setLoading(false);
+        setStreaming(false);
+      }
+    },
+    [loadChat]
+  );
+
+  const handleNewChat = useCallback(() => {
+    // Save current chat if it has messages
+    if (messages.length > 0 && activeChatIdRef.current) {
+      saveChat(activeChatIdRef.current, messages);
     }
-  }, [messages]);
+    startNewChat();
+    setMessages([]);
+    setStreamingAnswer("");
+    setError("");
+    setLoading(false);
+    setStreaming(false);
+  }, [messages, saveChat, startNewChat]);
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>Interview Helper</h1>
-      </header>
+    <div style={styles.outerContainer}>
+      <Sidebar
+        chats={chats}
+        activeChatId={activeChatId}
+        onSelectChat={handleSelectChat}
+        onNewChat={handleNewChat}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        settings={settings}
+        onProviderChange={setProvider}
+        onModelChange={setModel}
+        onApiKeyChange={setApiKey}
+      />
 
-      <main ref={mainRef} style={styles.main}>
-        <AnswerDisplay
-          messages={messages}
-          streamingAnswer={streamingAnswer}
-          loading={loading}
-          error={error}
-        />
-      </main>
+      <div className="main-container" style={styles.container}>
+        <header style={styles.header}>
+          <button
+            className="hamburger-button"
+            style={styles.hamburger}
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+          >
+            ☰
+          </button>
+          <h1 style={styles.title}>Interview Helper</h1>
+        </header>
 
-      <footer style={styles.footer}>
-        <Recorder
-          onQuestion={handleQuestion}
-          onCancel={handleCancel}
-          disabled={loading}
-          streaming={streaming || loading}
-        />
-      </footer>
+        <main
+          ref={mainRef}
+          style={styles.main}
+          onScroll={handleScroll}
+        >
+          <AnswerDisplay
+            messages={messages}
+            streamingAnswer={streamingAnswer}
+            loading={loading}
+            error={error}
+          />
+
+          <button
+            onClick={scrollToBottom}
+            style={{
+              ...styles.scrollButton,
+              opacity: showScrollButton ? 1 : 0,
+              pointerEvents: showScrollButton ? "auto" : "none",
+            }}
+            aria-label="Scroll to bottom"
+          >
+            ↓
+          </button>
+        </main>
+
+        <footer style={styles.footer}>
+          <Recorder
+            onQuestion={handleQuestion}
+            onCancel={handleCancel}
+            disabled={loading}
+            streaming={streaming || loading}
+          />
+        </footer>
+      </div>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  outerContainer: {
+    display: "flex",
+    height: "100%",
+  },
   container: {
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    maxWidth: 600,
-    margin: "0 auto",
+    flex: 1,
+    minWidth: 0,
     padding: "env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 16px)",
   },
   header: {
-    textAlign: "center",
+    display: "flex",
+    alignItems: "center",
     padding: "12px 0",
     flexShrink: 0,
+    gap: 12,
+  },
+  hamburger: {
+    background: "transparent",
+    border: "none",
+    color: "var(--text-muted)",
+    fontSize: "1.4rem",
+    cursor: "pointer",
+    padding: "4px 8px",
+    lineHeight: 1,
   },
   title: {
     fontSize: "1.1rem",
@@ -124,11 +245,32 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto",
     display: "flex",
     flexDirection: "column",
+    position: "relative",
   },
   footer: {
     flexShrink: 0,
     padding: "16px 0",
     display: "flex",
     justifyContent: "center",
+  },
+  scrollButton: {
+    position: "sticky",
+    bottom: 8,
+    alignSelf: "flex-end",
+    width: 36,
+    height: 36,
+    borderRadius: "50%",
+    background: "var(--bg-surface)",
+    border: "1px solid #334155",
+    color: "var(--accent)",
+    fontSize: "1.1rem",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+    flexShrink: 0,
+    zIndex: 10,
+    transition: "opacity 0.2s ease",
   },
 };

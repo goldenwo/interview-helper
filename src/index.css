@@ -40,3 +40,19 @@ body {
     opacity: 0.4;
   }
 }
+
+/* Desktop: show sidebar always, hide hamburger, offset main content */
+@media (min-width: 768px) {
+  .sidebar-desktop {
+    transform: translateX(0) !important;
+  }
+  .hamburger-button {
+    display: none !important;
+  }
+  .sidebar-close-button {
+    display: none !important;
+  }
+  .main-container {
+    margin-left: 260px;
+  }
+}
