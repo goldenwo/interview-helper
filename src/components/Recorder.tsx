@@ -2,13 +2,15 @@ import { useState, useRef, useEffect, useCallback } from "react";
 
 interface Props {
   onQuestion: (question: string) => void;
+  onCancel: () => void;
   disabled: boolean;
+  streaming: boolean;
 }
 
 const SpeechRecognitionCtor =
   window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
-export default function Recorder({ onQuestion, disabled }: Props) {
+export default function Recorder({ onQuestion, onCancel, disabled, streaming }: Props) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const transcriptRef = useRef("");
@@ -53,12 +55,7 @@ export default function Recorder({ onQuestion, disabled }: Props) {
 
     recognition.onend = () => {
       setListening(false);
-      const final = transcriptRef.current.trim();
-      if (final) {
-        onQuestion(final);
-        transcriptRef.current = "";
-        setTranscript("");
-      }
+      // Don't auto-submit — let the user review and tap Send
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -74,6 +71,13 @@ export default function Recorder({ onQuestion, disabled }: Props) {
     transcriptRef.current = "";
     setTranscript("");
   }, [listening, onQuestion]);
+
+  function handleClear() {
+    recognitionRef.current?.abort();
+    setListening(false);
+    transcriptRef.current = "";
+    setTranscript("");
+  }
 
   function handleSend() {
     if (transcriptRef.current.trim()) {
@@ -119,18 +123,34 @@ export default function Recorder({ onQuestion, disabled }: Props) {
           {listening ? "⏹" : "🎤"}
         </button>
 
-        {listening && transcript.trim() && (
+        {transcript.trim() && (
           <button onClick={handleSend} style={styles.sendButton}>
             Send ➤
+          </button>
+        )}
+
+        {transcript.trim() && !listening && (
+          <button onClick={handleClear} style={styles.cancelButton}>
+            Clear ✕
+          </button>
+        )}
+
+        {streaming && !listening && !transcript.trim() && (
+          <button onClick={onCancel} style={styles.cancelButton}>
+            Cancel ✕
           </button>
         )}
       </div>
 
       <p style={styles.hint}>
-        {disabled
+        {streaming
+          ? "Streaming answer… tap Cancel to stop"
+          : disabled
           ? "Getting answer…"
           : listening
-          ? "Listening… tap mic to stop, or Send to submit"
+          ? "Listening… tap ⏹ to stop, or Send to submit now"
+          : transcript.trim()
+          ? "Tap Send to submit, or Clear to discard"
           : "Tap the mic and ask your question"}
       </p>
     </div>
@@ -185,6 +205,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     background: "var(--accent)",
     color: "var(--bg)",
+    fontWeight: 600,
+    fontSize: "0.95rem",
+    cursor: "pointer",
+  },
+  cancelButton: {
+    padding: "10px 20px",
+    borderRadius: 24,
+    border: "none",
+    background: "var(--danger)",
+    color: "#fff",
     fontWeight: 600,
     fontSize: "0.95rem",
     cursor: "pointer",
