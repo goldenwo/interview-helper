@@ -13,6 +13,7 @@ const SpeechRecognitionCtor =
 export default function Recorder({ onQuestion, onCancel, disabled, streaming }: Props) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [error, setError] = useState("");
   const transcriptRef = useRef("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
@@ -61,6 +62,13 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       if (event.error !== "aborted") {
         console.error("Speech recognition error:", event.error);
+        const messages: Record<string, string> = {
+          "not-allowed": "Microphone permission denied. Check your browser settings.",
+          "no-speech": "No speech detected. Tap the mic and try again.",
+          "network": "Network error — speech recognition requires an internet connection.",
+          "service-not-allowed": "Speech recognition is not available in this browser.",
+        };
+        setError(messages[event.error] || `Speech recognition error: ${event.error}`);
       }
       setListening(false);
     };
@@ -68,6 +76,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     recognitionRef.current = recognition;
     recognition.start();
     setListening(true);
+    setError("");
     transcriptRef.current = "";
     setTranscript("");
   }, [listening, onQuestion]);
@@ -141,6 +150,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
           </button>
         )}
       </div>
+
+      {error && (
+        <p style={styles.errorText}>{error}</p>
+      )}
 
       <p style={styles.hint}>
         {streaming
@@ -218,6 +231,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     fontSize: "0.95rem",
     cursor: "pointer",
+  },
+  errorText: {
+    fontSize: "0.85rem",
+    color: "var(--danger)",
+    textAlign: "center" as const,
+    padding: "0 16px",
   },
   hint: {
     fontSize: "0.8rem",
