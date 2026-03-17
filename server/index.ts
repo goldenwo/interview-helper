@@ -97,6 +97,20 @@ function buildSystemPrompt(resume?: string, jobDescription?: string): string {
   return prompt;
 }
 
+// --- Client error logging (appears in Render logs) ---
+
+app.post("/api/log", (req, res) => {
+  const { level, message, detail } = req.body ?? {};
+  const safeLevel = level === "warn" ? "warn" : "error";
+  const safeMsg = String(message ?? "unknown").slice(0, 500).replace(/[\x00-\x1f]/g, "");
+  const safeDtl = detail ? String(detail).slice(0, 500).replace(/[\x00-\x1f]/g, "") : "";
+  const ua = req.headers["user-agent"] ?? "unknown-ua";
+  const entry = `[client:${safeLevel}] ${safeMsg}${safeDtl ? " | " + safeDtl : ""} [ua: ${ua}]`;
+  if (safeLevel === "warn") console.warn(entry);
+  else console.error(entry);
+  res.status(204).end();
+});
+
 // --- Routes ---
 
 const MAX_HISTORY_MESSAGES = 10;
