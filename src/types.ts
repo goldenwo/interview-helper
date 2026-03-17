@@ -12,10 +12,17 @@ export interface Settings {
   };
 }
 
+export interface ResumeData {
+  text: string;
+  fileName?: string;
+  updatedAt: number;
+}
+
 export interface StoredChat {
   id: string;
   title: string;
   messages: ChatMessage[];
+  jobDescription?: string;
   createdAt: number;
   updatedAt: number;
 }

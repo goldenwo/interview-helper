@@ -6,6 +6,37 @@ export interface StreamAnswerParams {
   provider: Provider;
   model: string;
   apiKey?: string;
+  resume?: string;
+  jobDescription?: string;
+}
+
+/** Retry fetch once on network error (ECONNRESET from Vite proxy during tsx --watch restarts). */
+async function fetchWithRetry(
+  input: RequestInfo,
+  init: RequestInit,
+  retries = 1,
+  delayMs = 500
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    const isNetworkError = err instanceof TypeError;
+    if (retries > 0 && isNetworkError && !init.signal?.aborted) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, delayMs);
+        init.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(init.signal!.reason ?? new DOMException("Aborted", "AbortError"));
+          },
+          { once: true }
+        );
+      });
+      return fetchWithRetry(input, init, retries - 1, delayMs);
+    }
+    throw err;
+  }
 }
 
 export async function streamAnswer(
@@ -13,17 +44,24 @@ export async function streamAnswer(
   onToken: (token: string) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch("/api/answer", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: params.messages,
-      provider: params.provider,
-      model: params.model,
-      apiKey: params.apiKey,
-    }),
-    signal,
-  });
+  const res = await fetchWithRetry(
+    "/api/answer",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: params.messages,
+        provider: params.provider,
+        model: params.model,
+        apiKey: params.apiKey,
+        resume: params.resume,
+        jobDescription: params.jobDescription,
+      }),
+      signal,
+    },
+    1,
+    500
+  );
 
   if (!res.ok || !res.body) {
     let message = `Server error ${res.status}`;

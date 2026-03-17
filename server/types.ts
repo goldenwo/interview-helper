@@ -7,6 +7,8 @@ export interface AnswerRequest {
   provider: Provider;
   model: string;
   apiKey?: string;
+  resume?: string;
+  jobDescription?: string;
 }
 
 export interface StreamParams {

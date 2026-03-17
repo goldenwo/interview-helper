@@ -32,7 +32,7 @@ export function useChats() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   const saveChat = useCallback(
-    (id: string | null, messages: ChatMessage[]): string => {
+    (id: string | null, messages: ChatMessage[], jobDescription?: string): string => {
       const now = Date.now();
       const chatId = id ?? crypto.randomUUID();
 
@@ -42,7 +42,9 @@ export function useChats() {
         if (id) {
           // Update existing chat
           next = prev.map((c) =>
-            c.id === chatId ? { ...c, messages, updatedAt: now } : c
+            c.id === chatId
+              ? { ...c, messages, ...(jobDescription !== undefined && { jobDescription }), updatedAt: now }
+              : c
           );
         } else {
           // Create new chat
@@ -50,6 +52,7 @@ export function useChats() {
             id: chatId,
             title: generateTitle(messages[0]?.content ?? "New chat"),
             messages,
+            jobDescription,
             createdAt: now,
             updatedAt: now,
           };
@@ -74,11 +77,11 @@ export function useChats() {
   );
 
   const loadChat = useCallback(
-    (id: string): ChatMessage[] | null => {
+    (id: string): { messages: ChatMessage[]; jobDescription?: string } | null => {
       const chat = chats.find((c) => c.id === id);
       if (!chat) return null;
       setActiveChatId(id);
-      return chat.messages;
+      return { messages: chat.messages, jobDescription: chat.jobDescription };
     },
     [chats]
   );
