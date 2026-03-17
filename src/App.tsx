@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import { streamAnswer } from "./api/getAnswer";
 import { useSettings } from "./hooks/useSettings";
 import { useChats } from "./hooks/useChats";
+import { useResume } from "./hooks/useResume";
 import type { ChatMessage } from "./types";
 
 export default function App() {
@@ -15,6 +16,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [jobDescription, setJobDescription] = useState("");
+  const { resume, setResume, clearResume } = useResume();
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
 
@@ -26,6 +29,15 @@ export default function App() {
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
+
+  // Auto-save JD to active chat with debounce
+  useEffect(() => {
+    if (!activeChatIdRef.current || messages.length === 0) return;
+    const timer = setTimeout(() => {
+      saveChat(activeChatIdRef.current!, messages, jobDescription || undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [jobDescription, messages, saveChat]);
 
   // Auto-scroll only when user is at the bottom
   useEffect(() => {
@@ -77,6 +89,8 @@ export default function App() {
             provider: settings.provider,
             model: settings.model,
             apiKey: settings.apiKeys[settings.provider],
+            resume: resume?.text,
+            jobDescription: jobDescription || undefined,
           },
           (token) => {
             if (first) {
@@ -98,7 +112,7 @@ export default function App() {
         setStreamingAnswer("");
 
         // Save to chat history
-        const chatId = saveChat(activeChatIdRef.current, finalMessages);
+        const chatId = saveChat(activeChatIdRef.current, finalMessages, jobDescription || undefined);
         setActiveChatId(chatId);
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -108,7 +122,7 @@ export default function App() {
         setStreaming(false);
       }
     },
-    [messages, settings, saveChat, setActiveChatId]
+    [messages, settings, resume, jobDescription, saveChat, setActiveChatId]
   );
 
   const handleSelectChat = useCallback(
@@ -116,6 +130,7 @@ export default function App() {
       const result = loadChat(id);
       if (result) {
         setMessages(result.messages);
+        setJobDescription(result.jobDescription ?? "");
         setStreamingAnswer("");
         setError("");
         setLoading(false);
@@ -126,17 +141,17 @@ export default function App() {
   );
 
   const handleNewChat = useCallback(() => {
-    // Save current chat if it has messages
     if (messages.length > 0 && activeChatIdRef.current) {
-      saveChat(activeChatIdRef.current, messages);
+      saveChat(activeChatIdRef.current, messages, jobDescription || undefined);
     }
     startNewChat();
     setMessages([]);
+    setJobDescription("");
     setStreamingAnswer("");
     setError("");
     setLoading(false);
     setStreaming(false);
-  }, [messages, saveChat, startNewChat]);
+  }, [messages, jobDescription, saveChat, startNewChat]);
 
   return (
     <div style={styles.outerContainer}>
@@ -151,6 +166,11 @@ export default function App() {
         onProviderChange={setProvider}
         onModelChange={setModel}
         onApiKeyChange={setApiKey}
+        jobDescription={jobDescription}
+        onJobDescriptionChange={setJobDescription}
+        resume={resume}
+        onResumeChange={setResume}
+        onResumeClear={clearResume}
       />
 
       <div className="main-container" style={styles.container}>
@@ -164,6 +184,10 @@ export default function App() {
             ☰
           </button>
           <h1 style={styles.title}>Interview Helper</h1>
+          <div style={styles.badges}>
+            {jobDescription && <span style={styles.badge}>JD active</span>}
+            {resume && <span style={styles.badge}>Resume active</span>}
+          </div>
         </header>
 
         <main
@@ -239,6 +263,21 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--text-muted)",
     letterSpacing: "0.05em",
     textTransform: "uppercase" as const,
+  },
+  badges: {
+    display: "flex",
+    gap: 6,
+    marginLeft: "auto",
+    flexShrink: 0,
+  },
+  badge: {
+    background: "#164e63",
+    color: "#38bdf8",
+    fontSize: "0.6rem",
+    padding: "2px 8px",
+    borderRadius: 10,
+    fontWeight: 500,
+    whiteSpace: "nowrap",
   },
   main: {
     flex: 1,
