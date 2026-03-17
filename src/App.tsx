@@ -113,9 +113,9 @@ export default function App() {
 
   const handleSelectChat = useCallback(
     (id: string) => {
-      const chatMessages = loadChat(id);
-      if (chatMessages) {
-        setMessages(chatMessages);
+      const result = loadChat(id);
+      if (result) {
+        setMessages(result.messages);
         setStreamingAnswer("");
         setError("");
         setLoading(false);
