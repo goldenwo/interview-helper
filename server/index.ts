@@ -22,7 +22,7 @@ const MAX_CONCURRENT_PER_IP = 2;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? "http://localhost:5173";
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 
-app.use(express.json({ limit: "50kb" }));
+app.use(express.json({ limit: "100kb" }));
 
 app.use(
   "/api/",
@@ -76,13 +76,33 @@ For follow-ups: continue naturally in first person, in context of the conversati
 
 Keep answers concise enough to glance at on a phone. Use plain language, no markdown.`;
 
+const MAX_CONTEXT_LENGTH = 10_000;
+
+function buildSystemPrompt(resume?: string, jobDescription?: string): string {
+  let prompt = SYSTEM_PROMPT;
+
+  if (resume) {
+    prompt += `\n\nHere is the user's resume for reference:\n---\n${resume.slice(0, MAX_CONTEXT_LENGTH)}\n---`;
+  }
+
+  if (jobDescription) {
+    prompt += `\n\nHere is the job description the user is interviewing for:\n---\n${jobDescription.slice(0, MAX_CONTEXT_LENGTH)}\n---`;
+  }
+
+  if (resume || jobDescription) {
+    prompt += `\n\nUse this context to tailor your responses. Reference specific experience from the resume and align answers with the job requirements.`;
+  }
+
+  return prompt;
+}
+
 // --- Routes ---
 
 const MAX_HISTORY_MESSAGES = 10;
 const VALID_PROVIDERS: Provider[] = ["openai", "anthropic", "google"];
 
 app.post("/api/answer", async (req, res) => {
-  const { messages, provider, model, apiKey } = req.body as Partial<AnswerRequest>;
+  const { messages, provider, model, apiKey, resume, jobDescription } = req.body as Partial<AnswerRequest>;
 
   // Validate messages
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -116,6 +136,16 @@ app.post("/api/answer", async (req, res) => {
     return;
   }
 
+  // Validate context fields
+  if (resume && typeof resume === "string" && resume.length > MAX_CONTEXT_LENGTH) {
+    res.status(400).json({ error: `Resume too long (max ${MAX_CONTEXT_LENGTH} chars)` });
+    return;
+  }
+  if (jobDescription && typeof jobDescription === "string" && jobDescription.length > MAX_CONTEXT_LENGTH) {
+    res.status(400).json({ error: `Job description too long (max ${MAX_CONTEXT_LENGTH} chars)` });
+    return;
+  }
+
   const adapter = adapters[resolvedProvider];
   const trimmed = messages.slice(-MAX_HISTORY_MESSAGES);
 
@@ -128,7 +158,7 @@ app.post("/api/answer", async (req, res) => {
       model: resolvedModel,
       apiKey: resolvedKey,
       messages: trimmed,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: buildSystemPrompt(resume, jobDescription),
       maxTokens: 512,
       temperature: 0.4,
       signal: abortController.signal,
