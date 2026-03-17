@@ -125,7 +125,7 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
     return;
   }
   try {
-    const pdfjsLib = await import("pdfjs-dist");
+    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const data = new Uint8Array(req.body).buffer;
     const pdf = await pdfjsLib.getDocument({ data }).promise;
     const pages: string[] = [];
