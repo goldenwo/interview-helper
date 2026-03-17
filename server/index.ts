@@ -111,6 +111,37 @@ app.post("/api/log", (req, res) => {
   res.status(204).end();
 });
 
+// --- PDF extraction (server-side, avoids iOS browser incompatibilities) ---
+
+const MAX_PDF_SIZE = 1_000_000; // 1MB
+
+app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb" }), async (req, res) => {
+  if (!req.body?.length) {
+    res.status(400).json({ error: "No PDF data received" });
+    return;
+  }
+  if (req.body.length > MAX_PDF_SIZE) {
+    res.status(400).json({ error: "File must be under 1MB" });
+    return;
+  }
+  try {
+    const pdfjsLib = await import("pdfjs-dist");
+    const data = new Uint8Array(req.body).buffer;
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    const pages: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      pages.push(content.items.map((item: Record<string, unknown>) => ("str" in item ? item.str : "")).join(" "));
+    }
+    const text = pages.join("\n\n");
+    res.json({ text });
+  } catch (err) {
+    console.error("PDF extraction error:", err);
+    res.status(500).json({ error: "Failed to extract text from PDF" });
+  }
+});
+
 // --- Routes ---
 
 const MAX_HISTORY_MESSAGES = 10;

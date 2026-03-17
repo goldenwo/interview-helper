@@ -2,106 +2,23 @@ import { useRef, useState } from "react";
 
 const MAX_FILE_SIZE = 1_000_000; // 1MB
 
-function logToServer(
-	level: "error" | "warn",
-	message: string,
-	detail?: string,
-) {
-	fetch("/api/log", {
+async function extractPdfServer(file: File): Promise<string> {
+	const res = await fetch("/api/extract-pdf", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ level, message, detail }),
-	}).catch(() => {});
-}
-
-async function parsePdf(
-	pdfjsLib: typeof import("pdfjs-dist"),
-	data: ArrayBuffer,
-): Promise<string> {
-	logToServer("warn", "parsePdf: calling getDocument", `bufferSize=${data.byteLength}`);
-	const loadingTask = pdfjsLib.getDocument({ data });
-	logToServer("warn", "parsePdf: getDocument returned, awaiting promise");
-	const pdf = await loadingTask.promise;
-	logToServer("warn", "parsePdf: pdf loaded", `numPages=${pdf.numPages}`);
-	const pages: string[] = [];
-
-	for (let i = 1; i <= pdf.numPages; i++) {
-		const page = await pdf.getPage(i);
-		const content = await page.getTextContent();
-		pages.push(
-			content.items.map((item) => ("str" in item ? item.str : "")).join(" "),
-		);
+		headers: { "Content-Type": "application/pdf" },
+		body: file,
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: "Server error" }));
+		throw new Error(err.error ?? `Server returned ${res.status}`);
 	}
-
-	return pages.join("\n\n");
-}
-
-async function extractPdfText(file: File): Promise<string> {
-	let pdfjsLib: typeof import("pdfjs-dist");
-	try {
-		pdfjsLib = await import("pdfjs-dist");
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		logToServer("error", "Failed to import pdfjs-dist", msg);
-		throw err;
-	}
-
-	let arrayBuffer: ArrayBuffer;
-	try {
-		arrayBuffer = await file.arrayBuffer();
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		logToServer(
-			"error",
-			"file.arrayBuffer() failed",
-			`file=${file.name} size=${file.size} error=${msg}`,
-		);
-		throw err;
-	}
-
-	// Try with web worker first (faster, works on desktop browsers)
-	try {
-		const workerModule =
-			await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
-		pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
-		logToServer("warn", "Worker URL set, calling parsePdf", workerModule.default);
-		return await parsePdf(pdfjsLib, arrayBuffer);
-	} catch (workerErr) {
-		const workerMsg =
-			workerErr instanceof Error ? workerErr.message : String(workerErr);
-		logToServer(
-			"warn",
-			"PDF worker extraction failed, trying fallback",
-			workerMsg,
-		);
-		// Module workers unsupported on iOS WebKit — load worker code on main thread.
-		// Setting globalThis.pdfjsWorker lets pdfjs-dist skip Worker creation entirely
-		// and use its built-in "fake worker" (main-thread) path.
-		// Re-read file because the original ArrayBuffer was transferred to the failed worker.
-		try {
-			logToServer("warn", "Importing worker module for main-thread fallback");
-			const worker = await import(
-				/* @vite-ignore */ "pdfjs-dist/build/pdf.worker.min.mjs"
-			);
-			logToServer("warn", "Worker module imported", `keys=${Object.keys(worker).join(",")}`);
-			(globalThis as Record<string, unknown>).pdfjsWorker = worker;
-			const freshBuffer = await file.arrayBuffer();
-			logToServer("warn", "Fresh buffer read, calling parsePdf fallback", `bufferSize=${freshBuffer.byteLength}`);
-			return await parsePdf(pdfjsLib, freshBuffer);
-		} catch (fallbackErr) {
-			const fbMsg =
-				fallbackErr instanceof Error
-					? fallbackErr.message
-					: String(fallbackErr);
-			logToServer("error", "PDF main-thread fallback also failed", fbMsg);
-			throw fallbackErr;
-		}
-	}
+	const { text } = await res.json();
+	return text ?? "";
 }
 
 async function extractText(file: File): Promise<string> {
 	if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-		return extractPdfText(file);
+		return extractPdfServer(file);
 	}
 	return file.text();
 }
@@ -131,8 +48,6 @@ export default function FileUploader({
 		try {
 			const text = await extractText(file);
 			if (!text.trim()) {
-				const detail = `file=${file.name} type=${file.type} size=${file.size}`;
-				logToServer("error", "PDF extraction returned empty text", detail);
 				setError(
 					"Couldn't extract text from this file. Try pasting the content instead.",
 				);
@@ -141,10 +56,8 @@ export default function FileUploader({
 			onExtracted(text, file.name);
 		} catch (err) {
 			const errMsg = err instanceof Error ? err.message : String(err);
-			const detail = `file=${file.name} type=${file.type} size=${file.size} error=${errMsg}`;
-			logToServer("error", "PDF extraction threw", detail);
 			setError(
-				`Couldn't extract text from this PDF. Try pasting the content instead.`,
+				`Couldn't extract text from this PDF (${errMsg}). Try pasting the content instead.`,
 			);
 		} finally {
 			setLoading(false);
