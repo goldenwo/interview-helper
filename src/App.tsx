@@ -30,14 +30,18 @@ export default function App() {
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
 
-  // Auto-save JD to active chat with debounce
+  // Keep messages ref in sync for debounce effect
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // Auto-save JD to active chat with debounce (only on JD changes)
   useEffect(() => {
-    if (!activeChatIdRef.current || messages.length === 0) return;
+    if (!activeChatIdRef.current || messagesRef.current.length === 0) return;
     const timer = setTimeout(() => {
-      saveChat(activeChatIdRef.current!, messages, jobDescription || undefined);
+      saveChat(activeChatIdRef.current!, messagesRef.current, jobDescription || undefined);
     }, 500);
     return () => clearTimeout(timer);
-  }, [jobDescription, messages, saveChat]);
+  }, [jobDescription, saveChat]);
 
   // Auto-scroll only when user is at the bottom
   useEffect(() => {

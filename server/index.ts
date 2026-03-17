@@ -137,11 +137,19 @@ app.post("/api/answer", async (req, res) => {
   }
 
   // Validate context fields
-  if (resume && typeof resume === "string" && resume.length > MAX_CONTEXT_LENGTH) {
+  if (resume !== undefined && typeof resume !== "string") {
+    res.status(400).json({ error: "Resume must be a string" });
+    return;
+  }
+  if (resume && resume.length > MAX_CONTEXT_LENGTH) {
     res.status(400).json({ error: `Resume too long (max ${MAX_CONTEXT_LENGTH} chars)` });
     return;
   }
-  if (jobDescription && typeof jobDescription === "string" && jobDescription.length > MAX_CONTEXT_LENGTH) {
+  if (jobDescription !== undefined && typeof jobDescription !== "string") {
+    res.status(400).json({ error: "Job description must be a string" });
+    return;
+  }
+  if (jobDescription && jobDescription.length > MAX_CONTEXT_LENGTH) {
     res.status(400).json({ error: `Job description too long (max ${MAX_CONTEXT_LENGTH} chars)` });
     return;
   }
