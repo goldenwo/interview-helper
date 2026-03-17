@@ -69,10 +69,15 @@ async function extractPdfText(file: File): Promise<string> {
 			"PDF worker extraction failed, trying fallback",
 			workerMsg,
 		);
-		// Module workers unsupported on iOS WebKit — fall back to main thread
-		// Re-read file because the original ArrayBuffer was transferred to the failed worker
+		// Module workers unsupported on iOS WebKit — load worker code on main thread.
+		// Setting globalThis.pdfjsWorker lets pdfjs-dist skip Worker creation entirely
+		// and use its built-in "fake worker" (main-thread) path.
+		// Re-read file because the original ArrayBuffer was transferred to the failed worker.
 		try {
-			pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+			const worker = await import(
+				/* @vite-ignore */ "pdfjs-dist/build/pdf.worker.min.mjs"
+			);
+			(globalThis as Record<string, unknown>).pdfjsWorker = worker;
 			const freshBuffer = await file.arrayBuffer();
 			return await parsePdf(pdfjsLib, freshBuffer);
 		} catch (fallbackErr) {
