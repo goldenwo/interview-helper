@@ -7,3 +7,4 @@ Thumbs.db
 .superpowers/
 .claude/
 tsconfig.tsbuildinfo
+.playwright-mcp/
