@@ -18,7 +18,11 @@ async function parsePdf(
 	pdfjsLib: typeof import("pdfjs-dist"),
 	data: ArrayBuffer,
 ): Promise<string> {
-	const pdf = await pdfjsLib.getDocument({ data }).promise;
+	logToServer("warn", "parsePdf: calling getDocument", `bufferSize=${data.byteLength}`);
+	const loadingTask = pdfjsLib.getDocument({ data });
+	logToServer("warn", "parsePdf: getDocument returned, awaiting promise");
+	const pdf = await loadingTask.promise;
+	logToServer("warn", "parsePdf: pdf loaded", `numPages=${pdf.numPages}`);
 	const pages: string[] = [];
 
 	for (let i = 1; i <= pdf.numPages; i++) {
@@ -60,6 +64,7 @@ async function extractPdfText(file: File): Promise<string> {
 		const workerModule =
 			await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
 		pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
+		logToServer("warn", "Worker URL set, calling parsePdf", workerModule.default);
 		return await parsePdf(pdfjsLib, arrayBuffer);
 	} catch (workerErr) {
 		const workerMsg =
@@ -74,11 +79,14 @@ async function extractPdfText(file: File): Promise<string> {
 		// and use its built-in "fake worker" (main-thread) path.
 		// Re-read file because the original ArrayBuffer was transferred to the failed worker.
 		try {
+			logToServer("warn", "Importing worker module for main-thread fallback");
 			const worker = await import(
 				/* @vite-ignore */ "pdfjs-dist/build/pdf.worker.min.mjs"
 			);
+			logToServer("warn", "Worker module imported", `keys=${Object.keys(worker).join(",")}`);
 			(globalThis as Record<string, unknown>).pdfjsWorker = worker;
 			const freshBuffer = await file.arrayBuffer();
+			logToServer("warn", "Fresh buffer read, calling parsePdf fallback", `bufferSize=${freshBuffer.byteLength}`);
 			return await parsePdf(pdfjsLib, freshBuffer);
 		} catch (fallbackErr) {
 			const fbMsg =
