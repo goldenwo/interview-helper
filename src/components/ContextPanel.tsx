@@ -1,6 +1,8 @@
 import type { ResumeData } from "../types";
 import FileUploader from "./FileUploader";
 
+const MAX_JD_LENGTH = 10_000;
+
 interface Props {
   jobDescription: string;
   onJobDescriptionChange: (jd: string) => void;
@@ -23,7 +25,11 @@ export default function ContextPanel({
         placeholder="Paste the job description here..."
         style={styles.textarea}
         rows={6}
+        maxLength={MAX_JD_LENGTH}
       />
+      <span style={styles.charCount}>
+        {jobDescription.length.toLocaleString()} / {MAX_JD_LENGTH.toLocaleString()}
+      </span>
       {jobDescription && (
         <button
           onClick={() => onJobDescriptionChange("")}
@@ -118,5 +124,10 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "left",
     padding: 0,
     marginTop: 2,
+  },
+  charCount: {
+    fontSize: "0.6rem",
+    color: "var(--text-muted)",
+    textAlign: "right" as const,
   },
 };

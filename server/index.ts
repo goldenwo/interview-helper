@@ -22,6 +22,7 @@ const MAX_CONCURRENT_PER_IP = 2;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? "http://localhost:5173";
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 
+// 100kb covers max resume (10k chars) + max JD (10k chars) + 10 history messages + overhead
 app.use(express.json({ limit: "100kb" }));
 
 app.use(
@@ -82,11 +83,11 @@ function buildSystemPrompt(resume?: string, jobDescription?: string): string {
   let prompt = SYSTEM_PROMPT;
 
   if (resume) {
-    prompt += `\n\nHere is the user's resume for reference:\n---\n${resume.slice(0, MAX_CONTEXT_LENGTH)}\n---`;
+    prompt += `\n\nHere is the user's resume for reference:\n---\n${resume}\n---`;
   }
 
   if (jobDescription) {
-    prompt += `\n\nHere is the job description the user is interviewing for:\n---\n${jobDescription.slice(0, MAX_CONTEXT_LENGTH)}\n---`;
+    prompt += `\n\nHere is the job description the user is interviewing for:\n---\n${jobDescription}\n---`;
   }
 
   if (resume || jobDescription) {

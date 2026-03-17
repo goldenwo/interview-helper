@@ -20,7 +20,7 @@ async function extractPdfText(file: File): Promise<string> {
 }
 
 async function extractText(file: File): Promise<string> {
-  if (file.name.endsWith(".pdf")) {
+  if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
     return extractPdfText(file);
   }
   return file.text();

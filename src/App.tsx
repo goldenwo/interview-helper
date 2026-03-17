@@ -189,8 +189,8 @@ export default function App() {
           </button>
           <h1 style={styles.title}>Interview Helper</h1>
           <div style={styles.badges}>
-            {jobDescription && <span style={styles.badge}>JD active</span>}
-            {resume && <span style={styles.badge}>Resume active</span>}
+            {jobDescription && <span style={styles.badge}>{"\uD83D\uDCC4"} JD active</span>}
+            {resume && <span style={styles.badge}>{"\uD83D\uDCCB"} Resume active</span>}
           </div>
         </header>
 
@@ -281,7 +281,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "2px 8px",
     borderRadius: 10,
     fontWeight: 500,
-    whiteSpace: "nowrap",
+    whiteSpace: "nowrap" as const,
   },
   main: {
     flex: 1,

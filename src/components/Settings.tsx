@@ -1,6 +1,9 @@
+import { useState, useEffect } from "react";
 import type { Provider, Settings as SettingsType } from "../types";
 import { PROVIDER_MODELS, PROVIDER_LABELS } from "../config";
 import FileUploader from "./FileUploader";
+
+const MAX_RESUME_LENGTH = 10_000;
 
 interface Props {
   settings: SettingsType;
@@ -32,6 +35,10 @@ export default function Settings({
 }: Props) {
   const models = PROVIDER_MODELS[settings.provider];
   const currentKey = settings.apiKeys[settings.provider] ?? "";
+
+  // Buffer resume text locally to avoid writing to localStorage on every keystroke
+  const [localResume, setLocalResume] = useState(resumeText);
+  useEffect(() => { setLocalResume(resumeText); }, [resumeText]);
 
   return (
     <div style={styles.container}>
@@ -98,16 +105,20 @@ export default function Settings({
 
       <div style={styles.label}>Resume</div>
       <textarea
-        value={resumeText}
-        onChange={(e) => onResumeChange(e.target.value)}
+        value={localResume}
+        onChange={(e) => setLocalResume(e.target.value)}
         placeholder="Paste your resume here..."
         style={styles.resumeTextarea}
         rows={6}
-        onBlur={(e) => {
-          const val = e.target.value.trim();
-          if (val) onResumeChange(val);
+        maxLength={MAX_RESUME_LENGTH}
+        onBlur={() => {
+          const val = localResume.trim();
+          if (val !== resumeText) onResumeChange(val);
         }}
       />
+      <span style={styles.charCount}>
+        {localResume.length.toLocaleString()} / {MAX_RESUME_LENGTH.toLocaleString()}
+      </span>
       {resumeText && (
         <div style={styles.keyRow}>
           {resumeFileName && (
@@ -199,5 +210,10 @@ const styles: Record<string, React.CSSProperties> = {
     resize: "vertical",
     outline: "none",
     fontFamily: "inherit",
+  },
+  charCount: {
+    fontSize: "0.6rem",
+    color: "var(--text-muted)",
+    textAlign: "right" as const,
   },
 };

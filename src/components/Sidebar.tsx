@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { StoredChat, Provider, Settings as SettingsType, ResumeData } from "../types";
 import SettingsPanel from "./Settings";
 import ContextPanel from "./ContextPanel";
@@ -42,9 +42,11 @@ export default function Sidebar({
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("chats");
 
-  // Reset to chats tab when mobile sidebar reopens
+  // Reset to chats tab when mobile sidebar reopens (not on desktop where isOpen doesn't toggle)
+  const prevOpen = useRef(isOpen);
   useEffect(() => {
-    if (isOpen) setActiveTab("chats");
+    if (isOpen && !prevOpen.current) setActiveTab("chats");
+    prevOpen.current = isOpen;
   }, [isOpen]);
 
   const handleSelectChat = (id: string) => {
@@ -77,10 +79,12 @@ export default function Sidebar({
         </button>
 
         {/* Tab bar */}
-        <div style={styles.tabBar}>
+        <div style={styles.tabBar} role="tablist">
           {(["chats", "context", "settings"] as Tab[]).map((tab) => (
             <button
               key={tab}
+              role="tab"
+              aria-selected={activeTab === tab}
               onClick={() => setActiveTab(tab)}
               style={{
                 ...styles.tab,
