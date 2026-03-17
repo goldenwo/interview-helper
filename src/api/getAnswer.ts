@@ -10,24 +10,46 @@ export interface StreamAnswerParams {
   jobDescription?: string;
 }
 
+async function fetchWithRetry(
+  input: RequestInfo,
+  init: RequestInit,
+  retries = 1,
+  delayMs = 500
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    if (retries > 0 && !init.signal?.aborted) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      return fetchWithRetry(input, init, retries - 1, delayMs);
+    }
+    throw err;
+  }
+}
+
 export async function streamAnswer(
   params: StreamAnswerParams,
   onToken: (token: string) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch("/api/answer", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: params.messages,
-      provider: params.provider,
-      model: params.model,
-      apiKey: params.apiKey,
-      resume: params.resume,
-      jobDescription: params.jobDescription,
-    }),
-    signal,
-  });
+  const res = await fetchWithRetry(
+    "/api/answer",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: params.messages,
+        provider: params.provider,
+        model: params.model,
+        apiKey: params.apiKey,
+        resume: params.resume,
+        jobDescription: params.jobDescription,
+      }),
+      signal,
+    },
+    1,
+    500
+  );
 
   if (!res.ok || !res.body) {
     let message = `Server error ${res.status}`;
