@@ -10,6 +10,52 @@ interface Props {
 const SpeechRecognitionCtor =
   window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
+/**
+ * On iOS, webkitSpeechRecognition activates a "PlayAndRecord" audio session.
+ * After recognition stops, iOS doesn't always reset it — volume buttons
+ * control call volume and mic-mute sounds fire on taps. Playing a brief
+ * silent audio forces Safari to switch back to normal playback mode.
+ */
+let resetInFlight = false;
+
+function resetIOSAudioSession(): void {
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.userAgent.includes("Macintosh") && "ontouchend" in document);
+  if (!isIOS || resetInFlight) return;
+  resetInFlight = true;
+
+  const sampleRate = 44100;
+  const numSamples = 4410; // 0.1 seconds
+  const dataBytes = numSamples * 2;
+  const buf = new ArrayBuffer(44 + dataBytes);
+  const v = new DataView(buf);
+  const w = (o: number, s: string) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+  };
+  w(0, "RIFF");
+  v.setUint32(4, 36 + dataBytes, true);
+  w(8, "WAVE");
+  w(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); // block align
+  v.setUint16(34, 16, true); // 16-bit
+  w(36, "data");
+  v.setUint32(40, dataBytes, true);
+  // remaining bytes are 0 = silence
+
+  const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  const audio = new Audio(url);
+  const done = () => { URL.revokeObjectURL(url); resetInFlight = false; };
+  audio.addEventListener("ended", done, { once: true });
+  audio.addEventListener("error", done, { once: true });
+  audio.play().catch(done);
+}
+
 export default function Recorder({ onQuestion, onCancel, disabled, streaming }: Props) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
@@ -22,12 +68,15 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   useEffect(() => {
     return () => {
       recognitionRef.current?.abort();
+      // Best-effort: may be blocked by autoplay policy outside user gesture
+      resetIOSAudioSession();
     };
   }, []);
 
   const toggle = useCallback(() => {
     if (listening) {
       recognitionRef.current?.stop();
+      resetIOSAudioSession();
       return;
     }
 
@@ -83,6 +132,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
   function handleClear() {
     recognitionRef.current?.abort();
+    resetIOSAudioSession();
     setListening(false);
     transcriptRef.current = "";
     setTranscript("");
@@ -91,6 +141,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   function handleSend() {
     if (transcriptRef.current.trim()) {
       recognitionRef.current?.abort();
+      resetIOSAudioSession();
       setListening(false);
       onQuestion(transcriptRef.current.trim());
       transcriptRef.current = "";
