@@ -2,13 +2,11 @@ import { useRef, useState } from "react";
 
 const MAX_FILE_SIZE = 1_000_000; // 1MB
 
-async function extractPdfText(file: File): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist");
-  const workerModule = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
-
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+async function parsePdf(
+  pdfjsLib: typeof import("pdfjs-dist"),
+  data: ArrayBuffer,
+): Promise<string> {
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pages: string[] = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -18,6 +16,22 @@ async function extractPdfText(file: File): Promise<string> {
   }
 
   return pages.join("\n\n");
+}
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjsLib = await import("pdfjs-dist");
+  const arrayBuffer = await file.arrayBuffer();
+
+  // Try with web worker first (faster, works on desktop browsers)
+  try {
+    const workerModule = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
+    return await parsePdf(pdfjsLib, arrayBuffer);
+  } catch {
+    // Module workers unsupported on iOS WebKit — fall back to main thread
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+    return await parsePdf(pdfjsLib, arrayBuffer);
+  }
 }
 
 async function extractText(file: File): Promise<string> {
