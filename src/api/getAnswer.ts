@@ -6,6 +6,8 @@ export interface StreamAnswerParams {
   provider: Provider;
   model: string;
   apiKey?: string;
+  resume?: string;
+  jobDescription?: string;
 }
 
 export async function streamAnswer(
@@ -21,6 +23,8 @@ export async function streamAnswer(
       provider: params.provider,
       model: params.model,
       apiKey: params.apiKey,
+      resume: params.resume,
+      jobDescription: params.jobDescription,
     }),
     signal,
   });
