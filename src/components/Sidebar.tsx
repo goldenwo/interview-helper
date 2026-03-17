@@ -1,5 +1,9 @@
-import type { StoredChat, Provider, Settings as SettingsType } from "../types";
+import { useState, useEffect } from "react";
+import type { StoredChat, Provider, Settings as SettingsType, ResumeData } from "../types";
 import SettingsPanel from "./Settings";
+import ContextPanel from "./ContextPanel";
+
+type Tab = "chats" | "context" | "settings";
 
 interface Props {
   chats: StoredChat[];
@@ -12,6 +16,11 @@ interface Props {
   onProviderChange: (provider: Provider) => void;
   onModelChange: (model: string) => void;
   onApiKeyChange: (provider: Provider, key: string) => void;
+  jobDescription: string;
+  onJobDescriptionChange: (jd: string) => void;
+  resume: ResumeData | null;
+  onResumeChange: (text: string, fileName?: string) => void;
+  onResumeClear: () => void;
 }
 
 export default function Sidebar({
@@ -25,7 +34,19 @@ export default function Sidebar({
   onProviderChange,
   onModelChange,
   onApiKeyChange,
+  jobDescription,
+  onJobDescriptionChange,
+  resume,
+  onResumeChange,
+  onResumeClear,
 }: Props) {
+  const [activeTab, setActiveTab] = useState<Tab>("chats");
+
+  // Reset to chats tab when mobile sidebar reopens
+  useEffect(() => {
+    if (isOpen) setActiveTab("chats");
+  }, [isOpen]);
+
   const handleSelectChat = (id: string) => {
     onSelectChat(id);
     onClose();
@@ -38,7 +59,6 @@ export default function Sidebar({
 
   return (
     <>
-      {/* Backdrop (mobile only) */}
       {isOpen && <div style={styles.backdrop} onClick={onClose} />}
 
       <aside
@@ -48,7 +68,6 @@ export default function Sidebar({
           ...(isOpen ? styles.sidebarOpen : {}),
         }}
       >
-        {/* Close button (mobile only) */}
         <button className="sidebar-close-button" style={styles.closeButton} onClick={onClose}>
           ✕
         </button>
@@ -57,35 +76,66 @@ export default function Sidebar({
           + New Chat
         </button>
 
-        <div style={styles.sectionLabel}>Recent Chats</div>
-
-        <div style={styles.chatList}>
-          {chats.length === 0 && (
-            <p style={styles.emptyChatText}>No chats yet</p>
-          )}
-          {chats.map((chat) => (
+        {/* Tab bar */}
+        <div style={styles.tabBar}>
+          {(["chats", "context", "settings"] as Tab[]).map((tab) => (
             <button
-              key={chat.id}
-              onClick={() => handleSelectChat(chat.id)}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
               style={{
-                ...styles.chatItem,
-                ...(chat.id === activeChatId ? styles.chatItemActive : {}),
+                ...styles.tab,
+                ...(activeTab === tab ? styles.tabActive : {}),
               }}
             >
-              {chat.title}
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </div>
 
-        <div style={styles.divider} />
+        {/* Tab content */}
+        <div style={styles.tabContent}>
+          {activeTab === "chats" && (
+            <div style={styles.chatList}>
+              {chats.length === 0 && (
+                <p style={styles.emptyChatText}>No chats yet</p>
+              )}
+              {chats.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => handleSelectChat(chat.id)}
+                  style={{
+                    ...styles.chatItem,
+                    ...(chat.id === activeChatId ? styles.chatItemActive : {}),
+                  }}
+                >
+                  {chat.title}
+                </button>
+              ))}
+            </div>
+          )}
 
-        <div style={styles.sectionLabel}>Settings</div>
-        <SettingsPanel
-          settings={settings}
-          onProviderChange={onProviderChange}
-          onModelChange={onModelChange}
-          onApiKeyChange={onApiKeyChange}
-        />
+          {activeTab === "context" && (
+            <ContextPanel
+              jobDescription={jobDescription}
+              onJobDescriptionChange={onJobDescriptionChange}
+              resume={resume}
+              onSwitchToSettings={() => setActiveTab("settings")}
+            />
+          )}
+
+          {activeTab === "settings" && (
+            <SettingsPanel
+              settings={settings}
+              onProviderChange={onProviderChange}
+              onModelChange={onModelChange}
+              onApiKeyChange={onApiKeyChange}
+              resumeText={resume?.text ?? ""}
+              resumeFileName={resume?.fileName}
+              onResumeChange={onResumeChange}
+              onResumeClear={onResumeClear}
+            />
+          )}
+        </div>
       </aside>
     </>
   );
@@ -139,23 +189,41 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.9rem",
     cursor: "pointer",
     width: "100%",
-    marginBottom: 16,
+    marginBottom: 12,
     marginTop: 24,
   },
-  sectionLabel: {
-    fontSize: "0.65rem",
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    marginBottom: 8,
+  tabBar: {
+    display: "flex",
+    gap: 0,
+    borderBottom: "1px solid #334155",
+    marginBottom: 12,
   },
-  chatList: {
+  tab: {
+    flex: 1,
+    background: "transparent",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    color: "#64748b",
+    fontSize: "0.7rem",
+    fontWeight: 500,
+    padding: "8px 4px",
+    cursor: "pointer",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  tabActive: {
+    color: "#38bdf8",
+    borderBottomColor: "#38bdf8",
+  },
+  tabContent: {
     flex: 1,
     overflowY: "auto",
+    minHeight: 0,
+  },
+  chatList: {
     display: "flex",
     flexDirection: "column",
     gap: 4,
-    minHeight: 0,
   },
   chatItem: {
     background: "transparent",
@@ -181,11 +249,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.75rem",
     fontStyle: "italic",
     padding: "8px 10px",
-  },
-  divider: {
-    height: 1,
-    background: "#334155",
-    margin: "12px 0",
-    flexShrink: 0,
   },
 };
