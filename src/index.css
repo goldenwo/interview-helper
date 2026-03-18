@@ -17,9 +17,15 @@
 }
 
 html,
-body,
-#root {
+body {
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#root {
+  position: fixed;
+  inset: 0;
 }
 
 body {
