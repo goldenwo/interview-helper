@@ -7,11 +7,17 @@ export function useHealth() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    const abortController = new AbortController();
+
     const ping = async () => {
       try {
-        const res = await fetch("/api/health", { method: "GET" });
+        const res = await fetch("/api/health", {
+          method: "GET",
+          signal: abortController.signal,
+        });
         setHealthy(res.ok);
-      } catch {
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setHealthy(false);
       }
     };
@@ -23,6 +29,7 @@ export function useHealth() {
     intervalRef.current = setInterval(ping, PING_INTERVAL);
 
     return () => {
+      abortController.abort();
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);

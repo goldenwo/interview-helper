@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import type { StoredChat, ChatMessage } from "../types";
 
 const STORAGE_KEY = "interview-helper-chats";
-const MAX_CHATS = 10;
+export const MAX_CHATS = 10;
 
 function loadChats(): StoredChat[] {
   try {
@@ -15,7 +15,11 @@ function loadChats(): StoredChat[] {
 }
 
 function persistChats(chats: StoredChat[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+  } catch {
+    // localStorage quota exceeded — chats persist in memory for this session
+  }
 }
 
 function generateTitle(firstMessage: string): string {
@@ -39,7 +43,8 @@ export function useChats() {
       setChats((prev) => {
         let next: StoredChat[];
 
-        if (id) {
+        const existing = id ? prev.find((c) => c.id === chatId) : null;
+        if (existing) {
           // Update existing chat
           next = prev.map((c) =>
             c.id === chatId
@@ -47,7 +52,7 @@ export function useChats() {
               : c
           );
         } else {
-          // Create new chat
+          // Create new chat (also handles the case where the ID was evicted)
           const newChat: StoredChat = {
             id: chatId,
             title: generateTitle(messages[0]?.content ?? "New chat"),

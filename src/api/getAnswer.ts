@@ -81,16 +81,17 @@ export async function streamAnswer(
   const STREAM_TIMEOUT_MS = 10_000;
 
   while (true) {
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>(
       (_, reject) => {
         timer = setTimeout(
           () => reject(new Error("Connection lost — answer incomplete")),
           STREAM_TIMEOUT_MS
         );
-        signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
       }
     );
+    const abortHandler = () => clearTimeout(timer);
+    signal?.addEventListener("abort", abortHandler, { once: true });
 
     let result: ReadableStreamReadResult<Uint8Array>;
     try {
@@ -100,11 +101,13 @@ export async function streamAnswer(
       ]);
     } catch (e) {
       // Timeout fired — treat as disconnect
+      signal?.removeEventListener("abort", abortHandler);
       reader.cancel().catch(() => {});
       throw e;
     }
     // Clear the timeout since reader.read() won the race
-    clearTimeout(timer!);
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abortHandler);
 
     const { done, value } = result;
     if (done) break;
@@ -125,9 +128,9 @@ export async function streamAnswer(
           throw new Error(parsed.error);
         }
       } catch (e) {
-        if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
-          throw e;
-        }
+        // SyntaxError means JSON.parse failed on a partial/malformed line — skip it.
+        // Any other error (e.g. the server-sent error object) should propagate.
+        if (!(e instanceof SyntaxError)) throw e;
       }
     }
   }

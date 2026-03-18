@@ -11,6 +11,9 @@ import { useHealth } from "./hooks/useHealth";
 import { getStallPhrase } from "./utils/stallPhrases";
 import type { ChatMessage, InFlightState } from "./types";
 
+const INFLIGHT_KEY = "interview-helper-inflight";
+const INFLIGHT_MAX_AGE = 30 * 60 * 1000; // 30 minutes
+
 export default function App() {
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [streamingAnswer, setStreamingAnswer] = useState("");
@@ -25,7 +28,7 @@ export default function App() {
 	const [showRetry, setShowRetry] = useState(false);
 	const [lastQuestion, setLastQuestion] = useState("");
 	const [interruptedAnswer, setInterruptedAnswer] = useState("");
-	const { cost, addInputCost, addOutputCost, resetBudget, hasPricing } =
+	const { cost, addInputCost, addOutputCost, flushCost, resetBudget, hasPricing } =
 		useBudget();
 	const { healthy } = useHealth();
 	const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,15 +49,20 @@ export default function App() {
 		startNewChat,
 	} = useChats();
 	const activeChatIdRef = useRef<string | null>(null);
-
-	// Keep ref in sync
-	useEffect(() => {
-		activeChatIdRef.current = activeChatId;
-	}, [activeChatId]);
+	activeChatIdRef.current = activeChatId;
 
 	// Keep messages ref in sync for debounce effect
 	const messagesRef = useRef(messages);
 	messagesRef.current = messages;
+
+	// Mirror volatile state in refs so saveInflight can read current values
+	// without closing over them (keeps saveInflight stable with an empty dep array).
+	const lastQuestionRef = useRef(lastQuestion);
+	lastQuestionRef.current = lastQuestion;
+	const jobDescriptionRef = useRef(jobDescription);
+	jobDescriptionRef.current = jobDescription;
+	const settingsRef = useRef(settings);
+	settingsRef.current = settings;
 
 	// Auto-save JD to active chat with debounce (only on JD changes)
 	useEffect(() => {
@@ -69,18 +77,15 @@ export default function App() {
 		return () => clearTimeout(timer);
 	}, [jobDescription, saveChat]);
 
-	const INFLIGHT_KEY = "interview-helper-inflight";
-	const INFLIGHT_MAX_AGE = 30 * 60 * 1000; // 30 minutes
-
 	const saveInflight = useCallback(() => {
 		const state: InFlightState = {
 			chatId: activeChatIdRef.current ?? crypto.randomUUID(),
 			messages: messagesRef.current,
-			currentQuestion: lastQuestion,
+			currentQuestion: lastQuestionRef.current,
 			partialAnswer: partialAnswerRef.current,
-			jobDescription,
-			provider: settings.provider,
-			model: settings.model,
+			jobDescription: jobDescriptionRef.current,
+			provider: settingsRef.current.provider,
+			model: settingsRef.current.model,
 			timestamp: Date.now(),
 		};
 		try {
@@ -88,7 +93,7 @@ export default function App() {
 		} catch {
 			// localStorage full or unavailable — non-fatal
 		}
-	}, [lastQuestion, jobDescription, settings.provider, settings.model]);
+	}, []); // stable — all values read through refs
 
 	const clearInflight = useCallback(() => {
 		localStorage.removeItem(INFLIGHT_KEY);
@@ -156,9 +161,11 @@ export default function App() {
 	const handleCancel = useCallback(() => {
 		abortRef.current?.abort();
 		abortRef.current = null;
+		stopInflightPersistence();
+		clearInflight();
 		setLoading(false);
 		setStreaming(false);
-	}, []);
+	}, [stopInflightPersistence, clearInflight]);
 
 	const handleQuestion = useCallback(
 		async (question: string) => {
@@ -241,6 +248,7 @@ export default function App() {
 				setMessages(finalMessages);
 				setStreamingAnswer("");
 				setStallPhrase("");
+				flushCost();
 
 				// Clear in-flight state on success
 				stopInflightPersistence();
@@ -255,10 +263,10 @@ export default function App() {
 				setActiveChatId(chatId);
 			} catch (err) {
 				stopInflightPersistence();
-				// Save final in-flight state before showing error
-				saveInflight();
-
+				// User cancelled — don't persist state (they intentionally stopped).
 				if (controller.signal.aborted) return;
+				// Save final in-flight state so a retry can recover the partial answer.
+				saveInflight();
 				setError(err instanceof Error ? err.message : "Something went wrong");
 				setShowRetry(true);
 				setStallPhrase("");
@@ -280,6 +288,7 @@ export default function App() {
 			setActiveChatId,
 			addInputCost,
 			addOutputCost,
+			flushCost,
 			startInflightPersistence,
 			stopInflightPersistence,
 			saveInflight,

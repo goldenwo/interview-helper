@@ -19,7 +19,11 @@ function loadSettings(): Settings {
 }
 
 function saveSettings(settings: Settings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // localStorage quota exceeded — settings persist in memory for this session
+  }
 }
 
 export function useSettings() {
@@ -52,9 +56,10 @@ export function useSettings() {
 
   const setApiKey = useCallback((provider: Provider, key: string) => {
     setSettingsState((prev) => {
+      const { [provider]: _removed, ...rest } = prev.apiKeys;
       const next: Settings = {
         ...prev,
-        apiKeys: { ...prev.apiKeys, [provider]: key || undefined },
+        apiKeys: key ? { ...rest, [provider]: key } : rest,
       };
       saveSettings(next);
       return next;

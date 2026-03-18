@@ -79,6 +79,14 @@ function addTokens(ip: string, count: number) {
   entry.tokens += count;
 }
 
+// Sweep expired token buckets hourly to prevent unbounded Map growth.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of tokenUsage) {
+    if (now >= entry.resetAt) tokenUsage.delete(ip);
+  }
+}, 3_600_000).unref();
+
 // --- Provider adapters ---
 
 const adapters: Record<Provider, ProviderAdapter> = {
@@ -141,7 +149,9 @@ app.post("/api/log", (req, res) => {
 // --- PDF extraction (server-side, avoids iOS browser incompatibilities) ---
 
 const MAX_PDF_SIZE = 1_000_000; // 1MB
-const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
+// Lazily loaded on first PDF request so startup is not blocked by this import.
+let pdfjsLib: typeof import("pdfjs-dist/legacy/build/pdf.mjs") | null = null;
 
 app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb" }), async (req, res) => {
   if (!req.body?.length) {
@@ -153,6 +163,7 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
     return;
   }
   try {
+    if (!pdfjsLib) pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const data = new Uint8Array(req.body).buffer;
     const pdf = await pdfjsLib.getDocument({ data }).promise;
     const pages: string[] = [];
@@ -195,7 +206,11 @@ app.post("/api/answer", async (req, res) => {
   }
 
   // Validate provider
-  const resolvedProvider: Provider = provider && VALID_PROVIDERS.includes(provider) ? provider : "openai";
+  if (!provider || !VALID_PROVIDERS.includes(provider)) {
+    res.status(400).json({ error: `Unknown provider "${provider}". Must be one of: ${VALID_PROVIDERS.join(", ")}` });
+    return;
+  }
+  const resolvedProvider: Provider = provider;
 
   // Validate model (must be a non-empty string)
   const resolvedModel = typeof model === "string" && model.trim() ? model.trim() : "gpt-4o-mini";
@@ -278,7 +293,13 @@ app.post("/api/answer", async (req, res) => {
     if (abortController.signal.aborted) return;
     console.error(`${resolvedProvider} error:`, err);
 
-    const status = (err as { status?: number }).status;
+    // Different provider SDKs expose the HTTP status under different property names.
+    const errAny = err as Record<string, unknown>;
+    const status =
+      typeof errAny.status === "number" ? errAny.status :
+      typeof errAny.statusCode === "number" ? errAny.statusCode :
+      typeof errAny.httpErrorCode === "number" ? errAny.httpErrorCode :
+      undefined;
     const message =
       status === 429
         ? "Rate limit or quota exceeded — check your API key billing"

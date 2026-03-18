@@ -13,6 +13,10 @@ export const googleAdapter: ProviderAdapter = {
       systemInstruction: params.systemPrompt,
     });
 
+    if (params.messages.length === 0) {
+      throw new Error("No messages provided");
+    }
+
     // Convert ChatMessage[] to Google's Content[] format
     const history = params.messages.slice(0, -1).map((m) => ({
       role: m.role === "assistant" ? "model" : "user",

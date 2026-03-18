@@ -21,6 +21,9 @@ const isIOS =
  * silent audio forces Safari to switch back to normal playback mode.
  */
 let resetInFlight = false;
+// Tracks the in-progress reset so the start path can await it before
+// acquiring the audio session, preventing iOS session conflicts.
+let resetPromise: Promise<void> = Promise.resolve();
 
 function resetIOSAudioSession(): void {
   if (!isIOS || resetInFlight) return;
@@ -51,10 +54,15 @@ function resetIOSAudioSession(): void {
 
   const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
   const audio = new Audio(url);
-  const done = () => { URL.revokeObjectURL(url); resetInFlight = false; };
-  audio.addEventListener("ended", done, { once: true });
-  audio.addEventListener("error", done, { once: true });
-  audio.play().catch(done);
+  resetPromise = new Promise<void>((resolve) => {
+    const done = () => { URL.revokeObjectURL(url); resetInFlight = false; resolve(); };
+    audio.addEventListener("ended", done, { once: true });
+    audio.addEventListener("error", done, { once: true });
+    // Failsafe: if neither event fires (iOS kills the audio element early),
+    // resolve after 500ms so resetInFlight never gets permanently stuck.
+    setTimeout(done, 500);
+    audio.play().catch(done);
+  });
 }
 
 /**
@@ -66,8 +74,11 @@ async function warmIOSAudioSession(): Promise<void> {
   if (!isIOS) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Immediately release — we just needed iOS to wake up the audio session
     stream.getTracks().forEach((t) => t.stop());
+    // Brief pause so iOS can finish handing the audio session to
+    // SpeechRecognition. Without this, recognition.start() can race the
+    // track-stop teardown and iOS refuses to activate the mic.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
   } catch {
     // Permission denied or unavailable — recognition.start() will surface this
   }
@@ -84,6 +95,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   const audioStartedRef = useRef(false);
   const retryCountRef = useRef(0);
   const warmupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Prevents a second tap from launching a parallel warmup while one is in progress.
+  const warmingRef = useRef(false);
 
   const supported = !!SpeechRecognitionCtor;
 
@@ -253,15 +266,32 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
     if (!SpeechRecognitionCtor) return;
 
+    // Guard against a second tap arriving while warmup is already in progress.
+    // Without this, two concurrent warmups would each create a SpeechRecognition
+    // instance and the second would overwrite recognitionRef before the first starts.
+    if (warmingRef.current) return;
+
     // Abort any leftover instance before creating a fresh one
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch { /* ignore */ }
       recognitionRef.current = null;
     }
 
-    // On iOS, wake up the audio session before starting recognition.
-    // This forces iOS to properly re-acquire mic access after idle periods.
-    await warmIOSAudioSession();
+    // Wait for any in-progress audio session reset to finish before
+    // re-acquiring the session. Without this, the reset audio (playing
+    // ~100ms to switch iOS out of PlayAndRecord mode) races getUserMedia,
+    // leaving the audio session in a conflicted state that causes the mute
+    // beep and prevents the mic indicator from appearing.
+    await resetPromise;
+
+    warmingRef.current = true;
+    try {
+      // On iOS, wake up the audio session before starting recognition.
+      // This forces iOS to properly re-acquire mic access after idle periods.
+      await warmIOSAudioSession();
+    } finally {
+      warmingRef.current = false;
+    }
 
     wantsListeningRef.current = true;
     retryCountRef.current = 0;
@@ -303,7 +333,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     return (
       <p style={{ color: "var(--danger)", textAlign: "center" }}>
         Speech recognition is not supported in this browser. Use Chrome on
-        Android for the best experience.
+        Android or Safari on iOS for the best experience.
       </p>
     );
   }

@@ -14,10 +14,14 @@ function loadResume(): ResumeData | null {
 }
 
 function persistResume(data: ResumeData | null) {
-  if (data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } else {
-    localStorage.removeItem(STORAGE_KEY);
+  try {
+    if (data) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    // localStorage quota exceeded — resume persists in memory for this session
   }
 }
 
