@@ -6,7 +6,10 @@ import { streamAnswer } from "./api/getAnswer";
 import { useSettings } from "./hooks/useSettings";
 import { useChats } from "./hooks/useChats";
 import { useResume } from "./hooks/useResume";
-import type { ChatMessage } from "./types";
+import { useBudget } from "./hooks/useBudget";
+import { useHealth } from "./hooks/useHealth";
+import { getStallPhrase } from "./utils/stallPhrases";
+import type { ChatMessage, InFlightState } from "./types";
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -18,6 +21,17 @@ export default function App() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [jobDescription, setJobDescription] = useState("");
   const { resume, setResume, clearResume } = useResume();
+  const [stallPhrase, setStallPhrase] = useState("");
+  const [showRetry, setShowRetry] = useState(false);
+  const [lastQuestion, setLastQuestion] = useState("");
+  const [interruptedAnswer, setInterruptedAnswer] = useState("");
+  const { cost, addInputCost, addOutputCost, resetBudget, hasPricing } = useBudget();
+  const { healthy } = useHealth();
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallMinElapsedRef = useRef(false);
+  const firstTokenReceivedRef = useRef(false);
+  const inflightTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const partialAnswerRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
 
@@ -42,6 +56,69 @@ export default function App() {
     }, 500);
     return () => clearTimeout(timer);
   }, [jobDescription, saveChat]);
+
+  const INFLIGHT_KEY = "interview-helper-inflight";
+  const INFLIGHT_MAX_AGE = 30 * 60 * 1000; // 30 minutes
+
+  const saveInflight = useCallback(() => {
+    const state: InFlightState = {
+      chatId: activeChatIdRef.current ?? crypto.randomUUID(),
+      messages: messagesRef.current,
+      currentQuestion: lastQuestion,
+      partialAnswer: partialAnswerRef.current,
+      jobDescription,
+      provider: settings.provider,
+      model: settings.model,
+      timestamp: Date.now(),
+    };
+    try {
+      localStorage.setItem(INFLIGHT_KEY, JSON.stringify(state));
+    } catch {
+      // localStorage full or unavailable — non-fatal
+    }
+  }, [lastQuestion, jobDescription, settings.provider, settings.model]);
+
+  const clearInflight = useCallback(() => {
+    localStorage.removeItem(INFLIGHT_KEY);
+  }, []);
+
+  const startInflightPersistence = useCallback(() => {
+    if (inflightTimerRef.current) clearInterval(inflightTimerRef.current);
+    inflightTimerRef.current = setInterval(saveInflight, 500);
+  }, [saveInflight]);
+
+  const stopInflightPersistence = useCallback(() => {
+    if (inflightTimerRef.current) {
+      clearInterval(inflightTimerRef.current);
+      inflightTimerRef.current = null;
+    }
+  }, []);
+
+  // Recover from crash/reload
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(INFLIGHT_KEY);
+      if (!raw) return;
+      const state: InFlightState = JSON.parse(raw);
+      if (Date.now() - state.timestamp > INFLIGHT_MAX_AGE) {
+        localStorage.removeItem(INFLIGHT_KEY);
+        return;
+      }
+      // Restore state
+      setMessages(state.messages);
+      setJobDescription(state.jobDescription);
+      setLastQuestion(state.currentQuestion);
+      setActiveChatId(state.chatId);
+      if (state.partialAnswer) {
+        setInterruptedAnswer(state.partialAnswer);
+      }
+      setShowRetry(true);
+      localStorage.removeItem(INFLIGHT_KEY);
+    } catch {
+      // Corrupted JSON — discard silently
+      localStorage.removeItem(INFLIGHT_KEY);
+    }
+  }, []);
 
   // Auto-scroll only when user is at the bottom
   useEffect(() => {
@@ -82,11 +159,36 @@ export default function App() {
       setLoading(true);
       setStreaming(false);
       setError("");
+      setShowRetry(false);
+      setInterruptedAnswer("");
+      setLastQuestion(question);
+      partialAnswerRef.current = "";
+
+      // Show stall phrase immediately
+      const phrase = getStallPhrase(question);
+      setStallPhrase(phrase);
+      stallMinElapsedRef.current = false;
+      firstTokenReceivedRef.current = false;
+      stallTimerRef.current = setTimeout(() => {
+        stallMinElapsedRef.current = true;
+        if (firstTokenReceivedRef.current) {
+          setStallPhrase("");
+        }
+      }, 1500);
+
+      // Estimate input cost
+      const inputText = newMessages.map((m) => m.content).join("")
+        + (resume?.text ?? "")
+        + (jobDescription ?? "");
+      addInputCost(inputText, settings.model);
 
       let fullAnswer = "";
 
       try {
         let first = true;
+        // Start in-flight persistence
+        startInflightPersistence();
+
         await streamAnswer(
           {
             messages: newMessages,
@@ -101,9 +203,16 @@ export default function App() {
               setLoading(false);
               setStreaming(true);
               first = false;
+              firstTokenReceivedRef.current = true;
+              if (stallMinElapsedRef.current) {
+                setStallPhrase("");
+              }
             }
             fullAnswer += token;
+            partialAnswerRef.current = fullAnswer;
             setStreamingAnswer((prev) => prev + token);
+            // Live-update cost during streaming
+            addOutputCost(token, settings.model);
           },
           controller.signal
         );
@@ -114,20 +223,44 @@ export default function App() {
         ];
         setMessages(finalMessages);
         setStreamingAnswer("");
+        setStallPhrase("");
+
+        // Clear in-flight state on success
+        stopInflightPersistence();
+        clearInflight();
 
         // Save to chat history
         const chatId = saveChat(activeChatIdRef.current, finalMessages, jobDescription || undefined);
         setActiveChatId(chatId);
       } catch (err) {
+        stopInflightPersistence();
+        // Save final in-flight state before showing error
+        saveInflight();
+
         if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : "Something went wrong");
+        setShowRetry(true);
+        setStallPhrase("");
       } finally {
         setLoading(false);
         setStreaming(false);
+        if (stallTimerRef.current) {
+          clearTimeout(stallTimerRef.current);
+          stallTimerRef.current = null;
+        }
       }
     },
-    [messages, settings, resume, jobDescription, saveChat, setActiveChatId]
+    [messages, settings, resume, jobDescription, saveChat, setActiveChatId,
+     addInputCost, addOutputCost, startInflightPersistence, stopInflightPersistence,
+     saveInflight, clearInflight]
   );
+
+  const handleRetry = useCallback(() => {
+    if (!lastQuestion) return;
+    setShowRetry(false);
+    setInterruptedAnswer("");
+    handleQuestion(lastQuestion);
+  }, [lastQuestion, handleQuestion]);
 
   const handleSelectChat = useCallback(
     (id: string) => {
@@ -155,7 +288,13 @@ export default function App() {
     setError("");
     setLoading(false);
     setStreaming(false);
-  }, [messages, jobDescription, saveChat, startNewChat]);
+    setStallPhrase("");
+    setShowRetry(false);
+    setInterruptedAnswer("");
+    setLastQuestion("");
+    resetBudget();
+    clearInflight();
+  }, [messages, jobDescription, saveChat, startNewChat, resetBudget, clearInflight]);
 
   return (
     <div style={styles.outerContainer}>
@@ -204,6 +343,13 @@ export default function App() {
             streamingAnswer={streamingAnswer}
             loading={loading}
             error={error}
+            stallPhrase={stallPhrase}
+            showRetry={showRetry}
+            onRetry={handleRetry}
+            interruptedAnswer={interruptedAnswer}
+            cost={cost}
+            hasPricing={hasPricing(settings.model)}
+            healthy={healthy}
           />
 
           <button
