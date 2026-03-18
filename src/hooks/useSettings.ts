@@ -52,9 +52,10 @@ export function useSettings() {
 
   const setApiKey = useCallback((provider: Provider, key: string) => {
     setSettingsState((prev) => {
+      const { [provider]: _removed, ...rest } = prev.apiKeys;
       const next: Settings = {
         ...prev,
-        apiKeys: { ...prev.apiKeys, [provider]: key || undefined },
+        apiKeys: key ? { ...rest, [provider]: key } : rest,
       };
       saveSettings(next);
       return next;

@@ -81,7 +81,7 @@ export async function streamAnswer(
   const STREAM_TIMEOUT_MS = 10_000;
 
   while (true) {
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>(
       (_, reject) => {
         timer = setTimeout(
@@ -104,7 +104,7 @@ export async function streamAnswer(
       throw e;
     }
     // Clear the timeout since reader.read() won the race
-    clearTimeout(timer!);
+    clearTimeout(timer);
 
     const { done, value } = result;
     if (done) break;
@@ -125,9 +125,9 @@ export async function streamAnswer(
           throw new Error(parsed.error);
         }
       } catch (e) {
-        if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
-          throw e;
-        }
+        // SyntaxError means JSON.parse failed on a partial/malformed line — skip it.
+        // Any other error (e.g. the server-sent error object) should propagate.
+        if (!(e instanceof SyntaxError)) throw e;
       }
     }
   }

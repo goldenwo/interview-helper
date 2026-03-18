@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { StoredChat, Provider, Settings as SettingsType, ResumeData } from "../types";
+import { MAX_CHATS } from "../hooks/useChats";
 import SettingsPanel from "./Settings";
 import ContextPanel from "./ContextPanel";
 
@@ -102,6 +103,11 @@ export default function Sidebar({
             <div style={styles.chatList}>
               {chats.length === 0 && (
                 <p style={styles.emptyChatText}>No chats yet</p>
+              )}
+              {chats.length >= MAX_CHATS && (
+                <p style={styles.evictionNotice}>
+                  Showing {MAX_CHATS} most recent — oldest removed when limit is reached
+                </p>
               )}
               {chats.map((chat) => (
                 <button
@@ -253,5 +259,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.75rem",
     fontStyle: "italic",
     padding: "8px 10px",
+  },
+  evictionNotice: {
+    color: "var(--text-muted)",
+    fontSize: "0.7rem",
+    fontStyle: "italic",
+    padding: "4px 10px 8px",
+    borderBottom: "1px solid #334155",
+    marginBottom: 4,
   },
 };

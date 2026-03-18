@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import type { StoredChat, ChatMessage } from "../types";
 
 const STORAGE_KEY = "interview-helper-chats";
-const MAX_CHATS = 10;
+export const MAX_CHATS = 10;
 
 function loadChats(): StoredChat[] {
   try {

@@ -95,6 +95,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   const audioStartedRef = useRef(false);
   const retryCountRef = useRef(0);
   const warmupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Prevents a second tap from launching a parallel warmup while one is in progress.
+  const warmingRef = useRef(false);
 
   const supported = !!SpeechRecognitionCtor;
 
@@ -264,6 +266,11 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
     if (!SpeechRecognitionCtor) return;
 
+    // Guard against a second tap arriving while warmup is already in progress.
+    // Without this, two concurrent warmups would each create a SpeechRecognition
+    // instance and the second would overwrite recognitionRef before the first starts.
+    if (warmingRef.current) return;
+
     // Abort any leftover instance before creating a fresh one
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch { /* ignore */ }
@@ -277,9 +284,14 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     // beep and prevents the mic indicator from appearing.
     await resetPromise;
 
-    // On iOS, wake up the audio session before starting recognition.
-    // This forces iOS to properly re-acquire mic access after idle periods.
-    await warmIOSAudioSession();
+    warmingRef.current = true;
+    try {
+      // On iOS, wake up the audio session before starting recognition.
+      // This forces iOS to properly re-acquire mic access after idle periods.
+      await warmIOSAudioSession();
+    } finally {
+      warmingRef.current = false;
+    }
 
     wantsListeningRef.current = true;
     retryCountRef.current = 0;
