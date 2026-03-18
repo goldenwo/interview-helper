@@ -25,12 +25,11 @@ let resetInFlight = false;
 // acquiring the audio session, preventing iOS session conflicts.
 let resetPromise: Promise<void> = Promise.resolve();
 
-function resetIOSAudioSession(): void {
-  if (!isIOS || resetInFlight) return;
-  resetInFlight = true;
-
+// Pre-built silent WAV: 0.1s mono 16-bit PCM at 44100Hz.
+// Reused across all resetIOSAudioSession calls to avoid re-creating the buffer.
+const SILENT_WAV_BLOB = (() => {
   const sampleRate = 44100;
-  const numSamples = 4410; // 0.1 seconds
+  const numSamples = 4410;
   const dataBytes = numSamples * 2;
   const buf = new ArrayBuffer(44 + dataBytes);
   const v = new DataView(buf);
@@ -50,9 +49,14 @@ function resetIOSAudioSession(): void {
   v.setUint16(34, 16, true); // 16-bit
   w(36, "data");
   v.setUint32(40, dataBytes, true);
-  // remaining bytes are 0 = silence
+  return new Blob([buf], { type: "audio/wav" });
+})();
 
-  const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+function resetIOSAudioSession(): void {
+  if (!isIOS || resetInFlight) return;
+  resetInFlight = true;
+
+  const url = URL.createObjectURL(SILENT_WAV_BLOB);
   const audio = new Audio(url);
   resetPromise = new Promise<void>((resolve) => {
     const done = () => { URL.revokeObjectURL(url); resetInFlight = false; resolve(); };
@@ -255,12 +259,20 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     }
   }, []);
 
+  function stopListening() {
+    wantsListeningRef.current = false;
+    clearWarmupTimeout();
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+    resetIOSAudioSession();
+    setListening(false);
+  }
+
   const toggle = useCallback(async () => {
     if (listening) {
-      wantsListeningRef.current = false;
-      clearWarmupTimeout();
-      recognitionRef.current?.stop();
-      resetIOSAudioSession();
+      stopListening();
       return;
     }
 
@@ -301,29 +313,16 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   }, [listening, startRecognition]);
 
   function handleClear() {
-    wantsListeningRef.current = false;
-    clearWarmupTimeout();
-    if (recognitionRef.current) {
-      recognitionRef.current.abort();
-      recognitionRef.current = null;
-    }
-    resetIOSAudioSession();
-    setListening(false);
+    stopListening();
     transcriptRef.current = "";
     setTranscript("");
   }
 
   function handleSend() {
-    if (transcriptRef.current.trim()) {
-      wantsListeningRef.current = false;
-      clearWarmupTimeout();
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-        recognitionRef.current = null;
-      }
-      resetIOSAudioSession();
-      setListening(false);
-      onQuestion(transcriptRef.current.trim());
+    const text = transcriptRef.current.trim();
+    if (text) {
+      stopListening();
+      onQuestion(text);
       transcriptRef.current = "";
       setTranscript("");
     }

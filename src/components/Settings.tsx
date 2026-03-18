@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
 import type { Provider, Settings as SettingsType } from "../types";
-import { PROVIDER_MODELS, PROVIDER_LABELS } from "../config";
+import { PROVIDER_MODELS, PROVIDER_LABELS, PROVIDERS, MAX_CONTEXT_LENGTH } from "../config";
 import FileUploader from "./FileUploader";
-
-const MAX_RESUME_LENGTH = 10_000;
+import shared from "./sidebarStyles";
 
 interface Props {
   settings: SettingsType;
@@ -16,7 +15,6 @@ interface Props {
   onResumeClear: () => void;
 }
 
-const PROVIDERS: Provider[] = ["openai", "anthropic", "google"];
 
 function maskKey(key: string): string {
   if (key.length <= 8) return "••••••••";
@@ -110,14 +108,14 @@ export default function Settings({
         placeholder="Paste your resume here..."
         style={styles.resumeTextarea}
         rows={6}
-        maxLength={MAX_RESUME_LENGTH}
+        maxLength={MAX_CONTEXT_LENGTH}
         onBlur={() => {
           const val = localResume.trim();
           if (val !== resumeText) onResumeChange(val);
         }}
       />
       <span style={styles.charCount}>
-        {localResume.length.toLocaleString()} / {MAX_RESUME_LENGTH.toLocaleString()}
+        {localResume.length.toLocaleString()} / {MAX_CONTEXT_LENGTH.toLocaleString()}
       </span>
       {resumeText && (
         <div style={styles.keyRow}>
@@ -136,18 +134,9 @@ export default function Settings({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  label: {
-    fontSize: "0.65rem",
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    marginTop: 4,
-  },
+  ...shared,
+  divider: { ...shared.divider, margin: "12px 0" },
+  resumeTextarea: shared.textarea,
   select: {
     background: "var(--bg-surface)",
     color: "var(--text)",
@@ -179,41 +168,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--accent)",
     flex: 1,
   },
-  clearButton: {
-    background: "transparent",
-    color: "var(--text-muted)",
-    border: "1px solid #334155",
-    borderRadius: 4,
-    padding: "2px 8px",
-    fontSize: "0.7rem",
-    cursor: "pointer",
-  },
   disclaimer: {
     fontSize: "0.6rem",
     color: "var(--text-muted)",
     fontStyle: "italic",
     marginTop: 2,
-  },
-  divider: {
-    height: 1,
-    background: "#334155",
-    margin: "12px 0",
-  },
-  resumeTextarea: {
-    background: "var(--bg-surface)",
-    color: "var(--text)",
-    border: "1px solid #334155",
-    borderRadius: 6,
-    padding: "8px",
-    fontSize: "0.8rem",
-    width: "100%",
-    resize: "vertical",
-    outline: "none",
-    fontFamily: "inherit",
-  },
-  charCount: {
-    fontSize: "0.6rem",
-    color: "var(--text-muted)",
-    textAlign: "right" as const,
   },
 };

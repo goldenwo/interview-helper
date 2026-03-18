@@ -33,7 +33,7 @@ export interface InFlightState {
   currentQuestion: string;
   partialAnswer: string;
   jobDescription: string;
-  provider: string;
+  provider: Provider;
   model: string;
   timestamp: number;
 }

@@ -1,7 +1,7 @@
 import type { ResumeData } from "../types";
+import { MAX_CONTEXT_LENGTH } from "../config";
 import FileUploader from "./FileUploader";
-
-const MAX_JD_LENGTH = 10_000;
+import shared from "./sidebarStyles";
 
 interface Props {
   jobDescription: string;
@@ -25,10 +25,10 @@ export default function ContextPanel({
         placeholder="Paste the job description here..."
         style={styles.textarea}
         rows={6}
-        maxLength={MAX_JD_LENGTH}
+        maxLength={MAX_CONTEXT_LENGTH}
       />
       <span style={styles.charCount}>
-        {jobDescription.length.toLocaleString()} / {MAX_JD_LENGTH.toLocaleString()}
+        {jobDescription.length.toLocaleString()} / {MAX_CONTEXT_LENGTH.toLocaleString()}
       </span>
       {jobDescription && (
         <button
@@ -62,45 +62,8 @@ export default function ContextPanel({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  label: {
-    fontSize: "0.65rem",
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    marginTop: 4,
-  },
-  textarea: {
-    background: "var(--bg-surface)",
-    color: "var(--text)",
-    border: "1px solid #334155",
-    borderRadius: 6,
-    padding: "8px",
-    fontSize: "0.8rem",
-    width: "100%",
-    resize: "vertical",
-    outline: "none",
-    fontFamily: "inherit",
-  },
-  clearButton: {
-    background: "transparent",
-    color: "var(--text-muted)",
-    border: "1px solid #334155",
-    borderRadius: 4,
-    padding: "2px 8px",
-    fontSize: "0.7rem",
-    cursor: "pointer",
-    alignSelf: "flex-start",
-  },
-  divider: {
-    height: 1,
-    background: "#334155",
-    margin: "8px 0",
-  },
+  ...shared,
+  clearButton: { ...shared.clearButton, alignSelf: "flex-start" },
   resumeStatus: {
     display: "flex",
     alignItems: "center",
@@ -124,10 +87,5 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "left",
     padding: 0,
     marginTop: 2,
-  },
-  charCount: {
-    fontSize: "0.6rem",
-    color: "var(--text-muted)",
-    textAlign: "right" as const,
   },
 };

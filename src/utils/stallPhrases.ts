@@ -49,7 +49,7 @@ export function getStallPhrase(question: string): string {
   const category = categorize(question);
   const phrases = PHRASES[category];
   // Rotate: pick next phrase, wrapping around
-  let index = (lastUsed[category] + 1) % phrases.length;
+  const index = (lastUsed[category] + 1) % phrases.length;
   lastUsed[category] = index;
   return phrases[index];
 }

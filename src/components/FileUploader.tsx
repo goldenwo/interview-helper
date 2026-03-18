@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
-
-const MAX_FILE_SIZE = 1_000_000; // 1MB
+import { MAX_FILE_SIZE } from "../config";
 
 async function extractPdfServer(file: File): Promise<string> {
 	const res = await fetch("/api/extract-pdf", {
@@ -66,7 +65,7 @@ export default function FileUploader({
 	};
 
 	return (
-		<div>
+		<>
 			<input
 				ref={inputRef}
 				type="file"
@@ -85,7 +84,7 @@ export default function FileUploader({
 				{loading ? "Extracting..." : label}
 			</button>
 			{error && <p style={styles.error}>{error}</p>}
-		</div>
+		</>
 	);
 }
 

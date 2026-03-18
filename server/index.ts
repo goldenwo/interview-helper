@@ -166,12 +166,13 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
     if (!pdfjsLib) pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const data = new Uint8Array(req.body).buffer;
     const pdf = await pdfjsLib.getDocument({ data }).promise;
-    const pages: string[] = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      pages.push(content.items.map((item: Record<string, unknown>) => ("str" in item ? item.str : "")).join(" "));
-    }
+    const pages = await Promise.all(
+      Array.from({ length: pdf.numPages }, async (_, i) => {
+        const page = await pdf.getPage(i + 1);
+        const content = await page.getTextContent();
+        return content.items.map((item: Record<string, unknown>) => (typeof item.str === "string" ? item.str : "")).join(" ");
+      })
+    );
     const text = pages.join("\n\n");
     res.json({ text });
   } catch (err) {
@@ -183,7 +184,7 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
 // --- Routes ---
 
 const MAX_HISTORY_MESSAGES = 10;
-const VALID_PROVIDERS: Provider[] = ["openai", "anthropic", "google"];
+const VALID_PROVIDERS = Object.keys(adapters) as Provider[];
 
 app.post("/api/answer", async (req, res) => {
   const { messages, provider, model, apiKey, resume, jobDescription } = req.body as Partial<AnswerRequest>;

@@ -1,8 +1,8 @@
 export type { ChatMessage } from "../types";
-import type { Provider } from "../types";
+import type { ChatMessage, Provider } from "../types";
 
 export interface StreamAnswerParams {
-  messages: { role: "user" | "assistant"; content: string }[];
+  messages: ChatMessage[];
   provider: Provider;
   model: string;
   apiKey?: string;
@@ -10,7 +10,7 @@ export interface StreamAnswerParams {
   jobDescription?: string;
 }
 
-/** Retry fetch once on network error (ECONNRESET from Vite proxy during tsx --watch restarts). */
+/** Retry fetch once on network error or 502 (Vite proxy returns 502 when backend isn't ready). */
 async function fetchWithRetry(
   input: RequestInfo,
   init: RequestInit,
@@ -18,25 +18,36 @@ async function fetchWithRetry(
   delayMs = 500
 ): Promise<Response> {
   try {
-    return await fetch(input, init);
+    const res = await fetch(input, init);
+    if (res.status === 502 && retries > 0 && !init.signal?.aborted) {
+      await delayWithAbort(delayMs, init.signal);
+      return fetchWithRetry(input, init, retries - 1, delayMs);
+    }
+    return res;
   } catch (err) {
-    const isNetworkError = err instanceof TypeError;
-    if (retries > 0 && isNetworkError && !init.signal?.aborted) {
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, delayMs);
-        init.signal?.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            reject(init.signal!.reason ?? new DOMException("Aborted", "AbortError"));
-          },
-          { once: true }
-        );
-      });
+    if (retries > 0 && err instanceof TypeError && !init.signal?.aborted) {
+      await delayWithAbort(delayMs, init.signal);
       return fetchWithRetry(input, init, retries - 1, delayMs);
     }
     throw err;
   }
+}
+
+function delayWithAbort(ms: number, signal?: AbortSignal | null): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export async function streamAnswer(

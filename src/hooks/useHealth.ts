@@ -15,21 +15,29 @@ export function useHealth() {
           method: "GET",
           signal: abortController.signal,
         });
-        setHealthy(res.ok);
+        setHealthy(prev => prev === res.ok ? prev : res.ok);
+        return res.ok;
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setHealthy(false);
+        if (err instanceof DOMException && err.name === "AbortError") return false;
+        setHealthy(prev => prev ? false : prev);
+        return false;
       }
     };
 
-    // Initial ping
-    ping();
+    // Initial ping with a quick retry if backend isn't ready yet
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    ping().then((ok) => {
+      if (!ok && !abortController.signal.aborted) {
+        retryTimer = setTimeout(ping, 2000);
+      }
+    });
 
     // Poll every 30s
     intervalRef.current = setInterval(ping, PING_INTERVAL);
 
     return () => {
       abortController.abort();
+      clearTimeout(retryTimer);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);

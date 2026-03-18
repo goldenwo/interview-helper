@@ -12,8 +12,13 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   google: "Google",
 };
 
+export const PROVIDERS = Object.keys(PROVIDER_MODELS) as Provider[];
+
 export const DEFAULT_PROVIDER: Provider = "openai";
 export const DEFAULT_MODEL = "gpt-4o-mini";
+
+export const MAX_CONTEXT_LENGTH = 10_000;
+export const MAX_FILE_SIZE = 1_000_000; // 1MB
 
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "gpt-4o": { input: 0.0025, output: 0.01 },

@@ -1,26 +1,9 @@
 import { useState, useCallback } from "react";
 import type { StoredChat, ChatMessage } from "../types";
+import { loadFromStorage, saveToStorage } from "../utils/storage";
 
 const STORAGE_KEY = "interview-helper-chats";
 export const MAX_CHATS = 10;
-
-function loadChats(): StoredChat[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // corrupted data
-  }
-  return [];
-}
-
-function persistChats(chats: StoredChat[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
-  } catch {
-    // localStorage quota exceeded — chats persist in memory for this session
-  }
-}
 
 function generateTitle(firstMessage: string): string {
   const trimmed = firstMessage.trim();
@@ -32,7 +15,7 @@ function generateTitle(firstMessage: string): string {
 }
 
 export function useChats() {
-  const [chats, setChats] = useState<StoredChat[]>(loadChats);
+  const [chats, setChats] = useState<StoredChat[]>(() => loadFromStorage<StoredChat[]>(STORAGE_KEY, []));
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   const saveChat = useCallback(
@@ -72,7 +55,7 @@ export function useChats() {
           next = next.slice(0, MAX_CHATS);
         }
 
-        persistChats(next);
+        saveToStorage(STORAGE_KEY, next);
         return next;
       });
 

@@ -1,38 +1,22 @@
 import { useState, useCallback } from "react";
 import type { Settings, Provider } from "../types";
 import { DEFAULT_PROVIDER, DEFAULT_MODEL, PROVIDER_MODELS } from "../config";
+import { loadFromStorage, saveToStorage } from "../utils/storage";
 
 const STORAGE_KEY = "interview-helper-settings";
-
-function loadSettings(): Settings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // corrupted data — fall back to defaults
-  }
-  return {
-    provider: DEFAULT_PROVIDER,
-    model: DEFAULT_MODEL,
-    apiKeys: {},
-  };
-}
-
-function saveSettings(settings: Settings) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // localStorage quota exceeded — settings persist in memory for this session
-  }
-}
+const DEFAULT_SETTINGS: Settings = {
+  provider: DEFAULT_PROVIDER,
+  model: DEFAULT_MODEL,
+  apiKeys: {},
+};
 
 export function useSettings() {
-  const [settings, setSettingsState] = useState<Settings>(loadSettings);
+  const [settings, setSettingsState] = useState<Settings>(() => loadFromStorage(STORAGE_KEY, DEFAULT_SETTINGS));
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setSettingsState((prev) => {
       const next = { ...prev, ...patch };
-      saveSettings(next);
+      saveToStorage(STORAGE_KEY, next);
       return next;
     });
   }, []);
@@ -45,7 +29,7 @@ export function useSettings() {
         provider,
         model: models[0], // default to first model for new provider
       };
-      saveSettings(next);
+      saveToStorage(STORAGE_KEY, next);
       return next;
     });
   }, []);
@@ -61,7 +45,7 @@ export function useSettings() {
         ...prev,
         apiKeys: key ? { ...rest, [provider]: key } : rest,
       };
-      saveSettings(next);
+      saveToStorage(STORAGE_KEY, next);
       return next;
     });
   }, []);

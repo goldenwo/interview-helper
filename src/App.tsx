@@ -150,7 +150,10 @@ export default function App() {
 		if (!el) return;
 		const isNearBottom =
 			el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
-		setShowScrollButton(!isNearBottom);
+		setShowScrollButton(prev => {
+			const next = !isNearBottom;
+			return prev === next ? prev : next;
+		});
 	}, []);
 
 	const scrollToBottom = useCallback(() => {
