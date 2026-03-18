@@ -44,8 +44,7 @@ The interview helper app is used on a phone propped against a laptop screen duri
 - Multiple phrases per category — rotate to avoid sounding repetitive
 - Display: italicized, lighter color, visually distinct from the real answer
 - Stall phrase is shown for a **minimum of 1.5 seconds** to prevent a jarring flash if the server responds quickly
-- Once the minimum time has passed AND the first real token has arrived, the stall phrase fades out
-- Stall phrase and streaming answer are both visible briefly during the crossfade
+- Once the minimum time has passed AND the first real token has arrived, the stall phrase is removed instantly. The 1.5-second minimum display time already prevents the jarring flash, making a CSS crossfade animation unnecessary.
 
 **Implementation location:** Entirely client-side in App.tsx. No server involvement. A new utility file for the phrase bank and category matching logic.
 
@@ -174,7 +173,6 @@ On app load, check for `interview-helper-inflight`:
 #### 4c. Reset
 
 - Resets when user starts a new chat session
-- Can be manually reset from settings
 
 #### 4d. Server-Side Hard Cap (Safety Net)
 
