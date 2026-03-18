@@ -67,7 +67,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
   useEffect(() => {
     return () => {
-      recognitionRef.current?.abort();
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      }
       // Best-effort: may be blocked by autoplay policy outside user gesture
       resetIOSAudioSession();
     };
@@ -81,6 +84,12 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     }
 
     if (!SpeechRecognitionCtor) return;
+
+    // Abort any leftover instance before creating a fresh one
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch { /* ignore */ }
+      recognitionRef.current = null;
+    }
 
     const recognition = new SpeechRecognitionCtor();
     recognition.lang = "en-US";
@@ -104,8 +113,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     };
 
     recognition.onend = () => {
-      setListening(false);
-      // Don't auto-submit — let the user review and tap Send
+      // Guard: only update state if this is still the active instance
+      if (recognitionRef.current === recognition) {
+        setListening(false);
+      }
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -119,19 +130,30 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
         };
         setError(messages[event.error] || `Speech recognition error: ${event.error}`);
       }
-      setListening(false);
+      if (recognitionRef.current === recognition) {
+        setListening(false);
+      }
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
-    setListening(true);
-    setError("");
-    transcriptRef.current = "";
-    setTranscript("");
-  }, [listening, onQuestion]);
+    try {
+      recognition.start();
+      setListening(true);
+      setError("");
+      transcriptRef.current = "";
+      setTranscript("");
+    } catch (err) {
+      console.error("Failed to start speech recognition:", err);
+      setError("Failed to start recording. Tap the mic to try again.");
+      recognitionRef.current = null;
+    }
+  }, [listening]);
 
   function handleClear() {
-    recognitionRef.current?.abort();
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
     resetIOSAudioSession();
     setListening(false);
     transcriptRef.current = "";
@@ -140,7 +162,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
   function handleSend() {
     if (transcriptRef.current.trim()) {
-      recognitionRef.current?.abort();
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      }
       resetIOSAudioSession();
       setListening(false);
       onQuestion(transcriptRef.current.trim());

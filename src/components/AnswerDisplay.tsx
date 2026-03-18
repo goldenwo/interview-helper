@@ -9,9 +9,6 @@ interface Props {
   showRetry: boolean;
   onRetry: () => void;
   interruptedAnswer: string;
-  cost: number;
-  hasPricing: boolean;
-  healthy: boolean;
 }
 
 export default function AnswerDisplay({
@@ -23,36 +20,17 @@ export default function AnswerDisplay({
   showRetry,
   onRetry,
   interruptedAnswer,
-  cost,
-  hasPricing,
-  healthy,
 }: Props) {
   if (messages.length === 0 && !loading && !stallPhrase) {
     return (
       <div style={styles.center}>
         <p style={styles.placeholder}>Your answer will appear here</p>
-        <div style={styles.statusBar}>
-          <span style={{ ...styles.healthDot, background: healthy ? "#22c55e" : "#ef4444" }} />
-          <span style={styles.costText}>
-            {hasPricing
-              ? <span style={{ color: cost >= 0.5 ? "#ef4444" : "#22c55e" }}>${cost.toFixed(2)}</span>
-              : "$?"}
-          </span>
-        </div>
       </div>
     );
   }
 
   return (
     <div style={styles.chatLog}>
-      <div style={styles.statusBar}>
-        <span style={{ ...styles.healthDot, background: healthy ? "#22c55e" : "#ef4444" }} />
-        <span style={styles.costText}>
-          {hasPricing
-            ? <span style={{ color: cost >= 0.5 ? "#ef4444" : "#22c55e" }}>${cost.toFixed(2)}</span>
-            : "$?"}
-        </span>
-      </div>
 
       {messages.map((msg, i) => (
         <div key={i} style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
@@ -126,25 +104,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
     padding: "8px 0",
     width: "100%",
-  },
-  statusBar: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    alignSelf: "flex-end",
-    padding: "0 4px",
-  },
-  healthDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    display: "inline-block",
-    flexShrink: 0,
-  },
-  costText: {
-    fontSize: "0.75rem",
-    fontWeight: 500,
-    color: "var(--text-muted)",
   },
   userBubble: {
     alignSelf: "flex-end",
