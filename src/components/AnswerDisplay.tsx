@@ -91,7 +91,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.4,
   },
   answerText: {
-    fontSize: "clamp(1.1rem, 4vw, 1.6rem)",
+    fontSize: "clamp(1.25rem, 4vw, 1.6rem)",
     lineHeight: 1.5,
     fontWeight: 500,
     whiteSpace: "pre-wrap" as const,
