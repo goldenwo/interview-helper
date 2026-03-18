@@ -440,7 +440,7 @@ const styles: Record<string, React.CSSProperties> = {
 		flex: 1,
 		minWidth: 0,
 		padding:
-			"env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 16px)",
+			"env(safe-area-inset-top, 16px) max(env(safe-area-inset-right), 16px) env(safe-area-inset-bottom, 16px) max(env(safe-area-inset-left), 16px)",
 	},
 	header: {
 		display: "flex",
@@ -486,6 +486,8 @@ const styles: Record<string, React.CSSProperties> = {
 		display: "flex",
 		flexDirection: "column",
 		position: "relative",
+		overscrollBehavior: "contain",
+		WebkitOverflowScrolling: "touch",
 	},
 	footer: {
 		flexShrink: 0,
