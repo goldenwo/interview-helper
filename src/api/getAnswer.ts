@@ -78,8 +78,35 @@ export async function streamAnswer(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  const STREAM_TIMEOUT_MS = 10_000;
+
   while (true) {
-    const { done, value } = await reader.read();
+    let timer: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<never>(
+      (_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Connection lost — answer incomplete")),
+          STREAM_TIMEOUT_MS
+        );
+        signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+      }
+    );
+
+    let result: ReadableStreamReadResult<Uint8Array>;
+    try {
+      result = await Promise.race([
+        reader.read(),
+        timeoutPromise,
+      ]);
+    } catch (e) {
+      // Timeout fired — treat as disconnect
+      reader.cancel().catch(() => {});
+      throw e;
+    }
+    // Clear the timeout since reader.read() won the race
+    clearTimeout(timer!);
+
+    const { done, value } = result;
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });

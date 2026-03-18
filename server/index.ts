@@ -25,6 +25,11 @@ app.use(cors({ origin: ALLOWED_ORIGIN }));
 // 100kb covers max resume (10k chars) + max JD (10k chars) + 10 history messages + overhead
 app.use(express.json({ limit: "100kb" }));
 
+// Health check — registered before rate limiter so pings don't count
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 app.use(
   "/api/",
   rateLimit({
@@ -54,6 +59,26 @@ app.use("/api/", (req, res, next) => {
   next();
 });
 
+// Per-IP hourly token budget (estimated)
+const tokenUsage = new Map<string, { tokens: number; resetAt: number }>();
+const MAX_TOKENS_PER_HOUR = 100_000;
+
+function getTokenUsage(ip: string): { tokens: number; resetAt: number } {
+  const now = Date.now();
+  const entry = tokenUsage.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    const fresh = { tokens: 0, resetAt: now + 3_600_000 };
+    tokenUsage.set(ip, fresh);
+    return fresh;
+  }
+  return entry;
+}
+
+function addTokens(ip: string, count: number) {
+  const entry = getTokenUsage(ip);
+  entry.tokens += count;
+}
+
 // --- Provider adapters ---
 
 const adapters: Record<Provider, ProviderAdapter> = {
@@ -75,7 +100,9 @@ For behavioral questions: answer in first person using STAR format — "In my pr
 For technical questions: answer confidently in first person — "The way I think about this is..."
 For follow-ups: continue naturally in first person, in context of the conversation.
 
-Keep answers concise enough to glance at on a phone. Use plain language, no markdown.`;
+Format your response as 3-5 concise bullet points using "- " prefix. Each bullet should be a short phrase or single sentence — not a paragraph. The user will paraphrase these, so keep them scannable. No other markdown formatting (no headers, bold, code blocks, etc.).
+
+Keep answers concise enough to glance at on a phone.`;
 
 const MAX_CONTEXT_LENGTH = 10_000;
 
@@ -114,6 +141,7 @@ app.post("/api/log", (req, res) => {
 // --- PDF extraction (server-side, avoids iOS browser incompatibilities) ---
 
 const MAX_PDF_SIZE = 1_000_000; // 1MB
+const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
 app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb" }), async (req, res) => {
   if (!req.body?.length) {
@@ -125,7 +153,6 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
     return;
   }
   try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const data = new Uint8Array(req.body).buffer;
     const pdf = await pdfjsLib.getDocument({ data }).promise;
     const pages: string[] = [];
@@ -200,8 +227,22 @@ app.post("/api/answer", async (req, res) => {
     return;
   }
 
+  // Check hourly token budget
+  const ip = req.ip ?? "unknown";
+  const usage = getTokenUsage(ip);
+  if (usage.tokens >= MAX_TOKENS_PER_HOUR) {
+    res.status(429).json({ error: "Hourly token limit exceeded — please wait before sending more requests" });
+    return;
+  }
+
   const adapter = adapters[resolvedProvider];
   const trimmed = messages.slice(-MAX_HISTORY_MESSAGES);
+
+  // Estimate input tokens for budget tracking
+  const inputChars = trimmed.reduce((sum, m) => sum + m.content.length, 0)
+    + (resume?.length ?? 0)
+    + (jobDescription?.length ?? 0);
+  addTokens(ip, Math.ceil(inputChars / 4));
 
   // Abort if the client disconnects
   const abortController = new AbortController();
@@ -213,7 +254,7 @@ app.post("/api/answer", async (req, res) => {
       apiKey: resolvedKey,
       messages: trimmed,
       systemPrompt: buildSystemPrompt(resume, jobDescription),
-      maxTokens: 512,
+      maxTokens: 768,
       temperature: 0.4,
       signal: abortController.signal,
     });
@@ -222,10 +263,13 @@ app.post("/api/answer", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
+    let outputChars = 0;
     for await (const token of tokenStream) {
       if (abortController.signal.aborted) break;
+      outputChars += token.length;
       res.write(`data: ${JSON.stringify(token)}\n\n`);
     }
+    addTokens(ip, Math.ceil(outputChars / 4));
     if (!abortController.signal.aborted) {
       res.write("data: [DONE]\n\n");
       res.end();

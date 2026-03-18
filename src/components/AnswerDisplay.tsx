@@ -5,10 +5,23 @@ interface Props {
   streamingAnswer: string;
   loading: boolean;
   error: string;
+  stallPhrase: string;
+  showRetry: boolean;
+  onRetry: () => void;
+  interruptedAnswer: string;
 }
 
-export default function AnswerDisplay({ messages, streamingAnswer, loading, error }: Props) {
-  if (messages.length === 0 && !loading) {
+export default function AnswerDisplay({
+  messages,
+  streamingAnswer,
+  loading,
+  error,
+  stallPhrase,
+  showRetry,
+  onRetry,
+  interruptedAnswer,
+}: Props) {
+  if (messages.length === 0 && !loading && !stallPhrase) {
     return (
       <div style={styles.center}>
         <p style={styles.placeholder}>Your answer will appear here</p>
@@ -18,6 +31,7 @@ export default function AnswerDisplay({ messages, streamingAnswer, loading, erro
 
   return (
     <div style={styles.chatLog}>
+
       {messages.map((msg, i) => (
         <div key={i} style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
           <p style={msg.role === "user" ? styles.userText : styles.answerText}>
@@ -26,13 +40,26 @@ export default function AnswerDisplay({ messages, streamingAnswer, loading, erro
         </div>
       ))}
 
+      {stallPhrase && !streamingAnswer && (
+        <div style={styles.assistantBubble}>
+          <p style={styles.stallText}>{stallPhrase}</p>
+        </div>
+      )}
+
+      {interruptedAnswer && !streamingAnswer && (
+        <div style={styles.assistantBubble}>
+          <p style={styles.answerText}>{interruptedAnswer}</p>
+          <div style={styles.interruptedBanner}>Answer was interrupted</div>
+        </div>
+      )}
+
       {streamingAnswer && (
         <div style={styles.assistantBubble}>
           <p style={styles.answerText}>{streamingAnswer}</p>
         </div>
       )}
 
-      {loading && (
+      {loading && !stallPhrase && (
         <div style={styles.assistantBubble}>
           <div style={styles.pulse}>Thinking…</div>
         </div>
@@ -44,6 +71,12 @@ export default function AnswerDisplay({ messages, streamingAnswer, loading, erro
             {error}
           </p>
         </div>
+      )}
+
+      {showRetry && (
+        <button onClick={onRetry} style={styles.retryButton}>
+          Retry
+        </button>
       )}
     </div>
   );
@@ -58,6 +91,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     textAlign: "center",
     padding: 16,
+    flexDirection: "column",
+    gap: 16,
   },
   placeholder: {
     color: "var(--text-muted)",
@@ -91,10 +126,39 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.4,
   },
   answerText: {
-    fontSize: "clamp(1.1rem, 4vw, 1.6rem)",
+    fontSize: "clamp(1.25rem, 4vw, 1.6rem)",
     lineHeight: 1.5,
     fontWeight: 500,
     whiteSpace: "pre-wrap" as const,
+  },
+  stallText: {
+    fontSize: "clamp(1.1rem, 3.5vw, 1.4rem)",
+    lineHeight: 1.5,
+    fontStyle: "italic",
+    color: "var(--text-muted)",
+    whiteSpace: "pre-wrap" as const,
+  },
+  interruptedBanner: {
+    marginTop: 8,
+    padding: "4px 10px",
+    background: "#78350f",
+    color: "#fbbf24",
+    borderRadius: 6,
+    fontSize: "0.8rem",
+    fontWeight: 500,
+    display: "inline-block",
+  },
+  retryButton: {
+    alignSelf: "center",
+    padding: "10px 32px",
+    background: "var(--accent)",
+    color: "var(--bg)",
+    border: "none",
+    borderRadius: 8,
+    fontSize: "1rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    marginTop: 8,
   },
   pulse: {
     fontSize: "1.2rem",

@@ -26,3 +26,14 @@ export interface StoredChat {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface InFlightState {
+  chatId: string;
+  messages: ChatMessage[];
+  currentQuestion: string;
+  partialAnswer: string;
+  jobDescription: string;
+  provider: string;
+  model: string;
+  timestamp: number;
+}
