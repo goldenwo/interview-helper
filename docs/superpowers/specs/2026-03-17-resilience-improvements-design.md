@@ -72,7 +72,7 @@ Each bullet should be a short phrase or single sentence — not a paragraph.
 The user will paraphrase these, so keep them scannable.
 No other markdown formatting (no headers, bold, code blocks, etc.).
 ```
-- The client already renders markdown in AnswerDisplay, so `- ` bullets will render as a list naturally.
+- AnswerDisplay currently renders plain text with `pre-wrap`. The `- ` prefix bullets will display as plain text lines, which is visually clear enough on a phone screen without needing a markdown renderer.
 
 **Implementation location:** System prompt change in `server/index.ts`. Text size change in `src/components/AnswerDisplay.tsx` (inline styles). `maxTokens` constant in server config.
 
@@ -157,7 +157,7 @@ On app load, check for `interview-helper-inflight`:
     "gemini-2.5-pro": { input: 0.00125, output: 0.01 },
   }
   ```
-- Estimate tokens from character count: `tokens ≈ chars / 4` (note: this heuristic can be off by 2-3x for code-heavy responses common in technical interviews, but is sufficient for a cost awareness indicator)
+- Estimate tokens from character count: `tokens ≈ chars / 4` (note: this heuristic can be off by 2-3x for code-heavy responses common in technical interviews; for reasoning models like o1/o1-mini, hidden chain-of-thought tokens are billed but not visible in the response, so actual cost may be higher than estimated. Sufficient for a cost awareness indicator.)
 - If a model is not in the pricing table (e.g., newly added models), show "$?" instead of a dollar amount
 - On each request: estimate input tokens (messages + context) × input price
 - On each response: estimate output tokens × output price
