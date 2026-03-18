@@ -21,6 +21,9 @@ const isIOS =
  * silent audio forces Safari to switch back to normal playback mode.
  */
 let resetInFlight = false;
+// Tracks the in-progress reset so the start path can await it before
+// acquiring the audio session, preventing iOS session conflicts.
+let resetPromise: Promise<void> = Promise.resolve();
 
 function resetIOSAudioSession(): void {
   if (!isIOS || resetInFlight) return;
@@ -51,10 +54,15 @@ function resetIOSAudioSession(): void {
 
   const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
   const audio = new Audio(url);
-  const done = () => { URL.revokeObjectURL(url); resetInFlight = false; };
-  audio.addEventListener("ended", done, { once: true });
-  audio.addEventListener("error", done, { once: true });
-  audio.play().catch(done);
+  resetPromise = new Promise<void>((resolve) => {
+    const done = () => { URL.revokeObjectURL(url); resetInFlight = false; resolve(); };
+    audio.addEventListener("ended", done, { once: true });
+    audio.addEventListener("error", done, { once: true });
+    // Failsafe: if neither event fires (iOS kills the audio element early),
+    // resolve after 500ms so resetInFlight never gets permanently stuck.
+    setTimeout(done, 500);
+    audio.play().catch(done);
+  });
 }
 
 /**
@@ -66,8 +74,11 @@ async function warmIOSAudioSession(): Promise<void> {
   if (!isIOS) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Immediately release — we just needed iOS to wake up the audio session
     stream.getTracks().forEach((t) => t.stop());
+    // Brief pause so iOS can finish handing the audio session to
+    // SpeechRecognition. Without this, recognition.start() can race the
+    // track-stop teardown and iOS refuses to activate the mic.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
   } catch {
     // Permission denied or unavailable — recognition.start() will surface this
   }
@@ -258,6 +269,13 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       try { recognitionRef.current.abort(); } catch { /* ignore */ }
       recognitionRef.current = null;
     }
+
+    // Wait for any in-progress audio session reset to finish before
+    // re-acquiring the session. Without this, the reset audio (playing
+    // ~100ms to switch iOS out of PlayAndRecord mode) races getUserMedia,
+    // leaving the audio session in a conflicted state that causes the mute
+    // beep and prevents the mic indicator from appearing.
+    await resetPromise;
 
     // On iOS, wake up the audio session before starting recognition.
     // This forces iOS to properly re-acquire mic access after idle periods.
