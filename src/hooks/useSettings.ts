@@ -19,7 +19,11 @@ function loadSettings(): Settings {
 }
 
 function saveSettings(settings: Settings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // localStorage quota exceeded — settings persist in memory for this session
+  }
 }
 
 export function useSettings() {

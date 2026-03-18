@@ -206,7 +206,11 @@ app.post("/api/answer", async (req, res) => {
   }
 
   // Validate provider
-  const resolvedProvider: Provider = provider && VALID_PROVIDERS.includes(provider) ? provider : "openai";
+  if (!provider || !VALID_PROVIDERS.includes(provider)) {
+    res.status(400).json({ error: `Unknown provider "${provider}". Must be one of: ${VALID_PROVIDERS.join(", ")}` });
+    return;
+  }
+  const resolvedProvider: Provider = provider;
 
   // Validate model (must be a non-empty string)
   const resolvedModel = typeof model === "string" && model.trim() ? model.trim() : "gpt-4o-mini";

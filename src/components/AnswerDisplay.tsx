@@ -33,7 +33,7 @@ export default function AnswerDisplay({
     <div style={styles.chatLog}>
 
       {messages.map((msg, i) => (
-        <div key={i} style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
+        <div key={`${i}-${msg.role}-${msg.content.slice(0, 16)}`} style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
           <p style={msg.role === "user" ? styles.userText : styles.answerText}>
             {msg.content}
           </p>

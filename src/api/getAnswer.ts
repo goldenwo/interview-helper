@@ -88,9 +88,10 @@ export async function streamAnswer(
           () => reject(new Error("Connection lost — answer incomplete")),
           STREAM_TIMEOUT_MS
         );
-        signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
       }
     );
+    const abortHandler = () => clearTimeout(timer);
+    signal?.addEventListener("abort", abortHandler, { once: true });
 
     let result: ReadableStreamReadResult<Uint8Array>;
     try {
@@ -100,11 +101,13 @@ export async function streamAnswer(
       ]);
     } catch (e) {
       // Timeout fired — treat as disconnect
+      signal?.removeEventListener("abort", abortHandler);
       reader.cancel().catch(() => {});
       throw e;
     }
     // Clear the timeout since reader.read() won the race
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abortHandler);
 
     const { done, value } = result;
     if (done) break;

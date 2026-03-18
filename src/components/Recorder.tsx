@@ -333,7 +333,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     return (
       <p style={{ color: "var(--danger)", textAlign: "center" }}>
         Speech recognition is not supported in this browser. Use Chrome on
-        Android for the best experience.
+        Android or Safari on iOS for the best experience.
       </p>
     );
   }

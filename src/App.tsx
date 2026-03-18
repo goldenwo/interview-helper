@@ -49,11 +49,7 @@ export default function App() {
 		startNewChat,
 	} = useChats();
 	const activeChatIdRef = useRef<string | null>(null);
-
-	// Keep ref in sync
-	useEffect(() => {
-		activeChatIdRef.current = activeChatId;
-	}, [activeChatId]);
+	activeChatIdRef.current = activeChatId;
 
 	// Keep messages ref in sync for debounce effect
 	const messagesRef = useRef(messages);
