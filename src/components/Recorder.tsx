@@ -10,6 +10,10 @@ interface Props {
 const SpeechRecognitionCtor =
   window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
+const isIOS =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.userAgent.includes("Macintosh") && "ontouchend" in document);
+
 /**
  * On iOS, webkitSpeechRecognition activates a "PlayAndRecord" audio session.
  * After recognition stops, iOS doesn't always reset it — volume buttons
@@ -19,9 +23,6 @@ const SpeechRecognitionCtor =
 let resetInFlight = false;
 
 function resetIOSAudioSession(): void {
-  const isIOS =
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.userAgent.includes("Macintosh") && "ontouchend" in document);
   if (!isIOS || resetInFlight) return;
   resetInFlight = true;
 
@@ -56,28 +57,195 @@ function resetIOSAudioSession(): void {
   audio.play().catch(done);
 }
 
+/**
+ * On iOS Safari, after idle periods the audio session is silently killed.
+ * Calling getUserMedia briefly before starting SpeechRecognition forces
+ * iOS to re-acquire the audio session so the mic actually activates.
+ */
+async function warmIOSAudioSession(): Promise<void> {
+  if (!isIOS) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Immediately release — we just needed iOS to wake up the audio session
+    stream.getTracks().forEach((t) => t.stop());
+  } catch {
+    // Permission denied or unavailable — recognition.start() will surface this
+  }
+}
+
 export default function Recorder({ onQuestion, onCancel, disabled, streaming }: Props) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
   const transcriptRef = useRef("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  // Track whether user intends to keep listening (for iOS auto-restart)
+  const wantsListeningRef = useRef(false);
+  const audioStartedRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const warmupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const supported = !!SpeechRecognitionCtor;
 
+  function clearWarmupTimeout() {
+    if (warmupTimeoutRef.current) {
+      clearTimeout(warmupTimeoutRef.current);
+      warmupTimeoutRef.current = null;
+    }
+  }
+
+  // Kill stale recognition when page returns from background (iOS kills audio
+  // session when backgrounded, so any existing instance is a zombie)
   useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible" && recognitionRef.current) {
+        // Page came back from background — existing recognition is likely dead.
+        // If we were listening, we'll need to restart on next user tap.
+        try { recognitionRef.current.abort(); } catch { /* ignore */ }
+        recognitionRef.current = null;
+        wantsListeningRef.current = false;
+        clearWarmupTimeout();
+        setListening(false);
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (recognitionRef.current) {
         recognitionRef.current.abort();
         recognitionRef.current = null;
       }
-      // Best-effort: may be blocked by autoplay policy outside user gesture
+      wantsListeningRef.current = false;
+      clearWarmupTimeout();
       resetIOSAudioSession();
     };
   }, []);
 
-  const toggle = useCallback(() => {
+  // Dependency array is intentionally empty: all mutable data is accessed via
+  // refs so the function identity remains stable for recursive auto-restart.
+  const startRecognition = useCallback(() => {
+    if (!SpeechRecognitionCtor) return;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    // iOS Safari silently kills continuous sessions after idle periods.
+    // Use one-shot mode on iOS and auto-restart via onend.
+    recognition.continuous = !isIOS;
+
+    recognition.addEventListener("audiostart", () => {
+      audioStartedRef.current = true;
+    });
+
+    // Snapshot transcript accumulated from prior iOS one-shot sessions
+    const previousTranscript = transcriptRef.current;
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      let final = "";
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          final += result[0].transcript;
+        } else {
+          interim += result[0].transcript;
+        }
+      }
+      const currentText = final || interim;
+      const text = previousTranscript
+        ? previousTranscript + " " + currentText
+        : currentText;
+      transcriptRef.current = text;
+      setTranscript(text);
+    };
+
+    recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return;
+
+      // On iOS (non-continuous), auto-restart if user still wants to listen
+      if (isIOS && wantsListeningRef.current) {
+        // Restart recognition in one-shot mode for iOS
+        try {
+          recognitionRef.current = null;
+          startRecognition();
+          return;
+        } catch {
+          // Fall through to stop listening
+        }
+      }
+
+      wantsListeningRef.current = false;
+      setListening(false);
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (event.error === "aborted") return;
+
+      // "no-speech" on iOS just means the one-shot timed out — restart silently
+      if (isIOS && event.error === "no-speech" && wantsListeningRef.current) {
+        return; // onend will fire and auto-restart
+      }
+
+      console.error("Speech recognition error:", event.error);
+      const messages: Record<string, string> = {
+        "not-allowed": "Microphone permission denied. Check your browser settings.",
+        "no-speech": "No speech detected. Tap the mic and try again.",
+        "network": "Network error — speech recognition requires an internet connection.",
+        "service-not-allowed": "Speech recognition is not available in this browser.",
+      };
+      setError(messages[event.error] || `Speech recognition error: ${event.error}`);
+      if (recognitionRef.current === recognition) {
+        wantsListeningRef.current = false;
+        setListening(false);
+      }
+    };
+
+    recognitionRef.current = recognition;
+    audioStartedRef.current = false;
+
+    try {
+      recognition.start();
+      setListening(true);
+      setError("");
+
+      // Safety net: if mic never actually activates within 1.5s, abort and
+      // auto-retry once (handles iOS zombie audio session edge case)
+      if (isIOS) {
+        clearWarmupTimeout();
+        warmupTimeoutRef.current = setTimeout(() => {
+          if (
+            recognitionRef.current === recognition &&
+            !audioStartedRef.current &&
+            wantsListeningRef.current
+          ) {
+            console.warn("Mic did not activate within 1.5s — retrying");
+            try { recognition.abort(); } catch { /* ignore */ }
+            recognitionRef.current = null;
+            if (retryCountRef.current < 1) {
+              retryCountRef.current++;
+              startRecognition();
+            } else {
+              retryCountRef.current = 0;
+              wantsListeningRef.current = false;
+              setListening(false);
+              setError("Microphone failed to activate. Try tapping the mic again.");
+            }
+          }
+        }, 1500);
+      }
+    } catch (err) {
+      console.error("Failed to start speech recognition:", err);
+      setError("Failed to start recording. Tap the mic to try again.");
+      recognitionRef.current = null;
+      wantsListeningRef.current = false;
+      setListening(false);
+    }
+  }, []);
+
+  const toggle = useCallback(async () => {
     if (listening) {
+      wantsListeningRef.current = false;
+      clearWarmupTimeout();
       recognitionRef.current?.stop();
       resetIOSAudioSession();
       return;
@@ -91,65 +259,20 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       recognitionRef.current = null;
     }
 
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = true;
+    // On iOS, wake up the audio session before starting recognition.
+    // This forces iOS to properly re-acquire mic access after idle periods.
+    await warmIOSAudioSession();
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = "";
-      let final = "";
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          final += result[0].transcript;
-        } else {
-          interim += result[0].transcript;
-        }
-      }
-      const text = final || interim;
-      transcriptRef.current = text;
-      setTranscript(text);
-    };
-
-    recognition.onend = () => {
-      // Guard: only update state if this is still the active instance
-      if (recognitionRef.current === recognition) {
-        setListening(false);
-      }
-    };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error !== "aborted") {
-        console.error("Speech recognition error:", event.error);
-        const messages: Record<string, string> = {
-          "not-allowed": "Microphone permission denied. Check your browser settings.",
-          "no-speech": "No speech detected. Tap the mic and try again.",
-          "network": "Network error — speech recognition requires an internet connection.",
-          "service-not-allowed": "Speech recognition is not available in this browser.",
-        };
-        setError(messages[event.error] || `Speech recognition error: ${event.error}`);
-      }
-      if (recognitionRef.current === recognition) {
-        setListening(false);
-      }
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setListening(true);
-      setError("");
-      transcriptRef.current = "";
-      setTranscript("");
-    } catch (err) {
-      console.error("Failed to start speech recognition:", err);
-      setError("Failed to start recording. Tap the mic to try again.");
-      recognitionRef.current = null;
-    }
-  }, [listening]);
+    wantsListeningRef.current = true;
+    retryCountRef.current = 0;
+    transcriptRef.current = "";
+    setTranscript("");
+    startRecognition();
+  }, [listening, startRecognition]);
 
   function handleClear() {
+    wantsListeningRef.current = false;
+    clearWarmupTimeout();
     if (recognitionRef.current) {
       recognitionRef.current.abort();
       recognitionRef.current = null;
@@ -162,6 +285,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
   function handleSend() {
     if (transcriptRef.current.trim()) {
+      wantsListeningRef.current = false;
+      clearWarmupTimeout();
       if (recognitionRef.current) {
         recognitionRef.current.abort();
         recognitionRef.current = null;
