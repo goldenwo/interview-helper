@@ -38,7 +38,7 @@ app.use(
   "/api/",
   rateLimit({
     windowMs: 60_000,
-    max: 10,
+    max: 20,
     skip: isDev ? () => true : () => false,
     standardHeaders: true,
     legacyHeaders: false,
