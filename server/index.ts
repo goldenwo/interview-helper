@@ -2,12 +2,14 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import multer from "multer";
 import { fileURLToPath } from "url";
 import path from "path";
 import type { AnswerRequest, Provider, ProviderAdapter } from "./types.js";
 import { openaiAdapter } from "./adapters/openai.js";
 import { anthropicAdapter } from "./adapters/anthropic.js";
 import { googleAdapter } from "./adapters/google.js";
+import { transcribe } from "./adapters/whisper.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
@@ -136,12 +138,13 @@ function buildSystemPrompt(resume?: string, jobDescription?: string): string {
 
 app.post("/api/log", (req, res) => {
   const { level, message, detail } = req.body ?? {};
-  const safeLevel = level === "warn" ? "warn" : "error";
+  const safeLevel = level === "warn" ? "warn" : level === "info" ? "info" : "error";
   const safeMsg = String(message ?? "unknown").slice(0, 500).replace(/[\x00-\x1f]/g, "");
   const safeDtl = detail ? String(detail).slice(0, 500).replace(/[\x00-\x1f]/g, "") : "";
   const ua = req.headers["user-agent"] ?? "unknown-ua";
   const entry = `[client:${safeLevel}] ${safeMsg}${safeDtl ? " | " + safeDtl : ""} [ua: ${ua}]`;
-  if (safeLevel === "warn") console.warn(entry);
+  if (safeLevel === "info") console.log(entry);
+  else if (safeLevel === "warn") console.warn(entry);
   else console.error(entry);
   res.status(204).end();
 });
@@ -178,6 +181,68 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
   } catch (err) {
     console.error("PDF extraction error:", err);
     res.status(500).json({ error: "Failed to extract text from PDF" });
+  }
+});
+
+// --- Whisper transcription ---
+
+const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB cap
+
+app.post("/api/transcribe", (req, res, next) => {
+  upload.single("audio")(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+        res.status(413).json({ error: "Audio file too large (max 5MB)" });
+        return;
+      }
+      res.status(400).json({ error: "File upload error" });
+      return;
+    }
+    next();
+  });
+}, async (req, res) => {
+  const start = Date.now();
+  const ip = req.ip ?? "unknown";
+  const file = req.file;
+
+  if (!file) {
+    res.status(400).json({ error: "No audio file uploaded" });
+    return;
+  }
+
+  if (!file.mimetype.startsWith("audio/")) {
+    res.status(400).json({ error: `Invalid MIME type: ${file.mimetype}` });
+    return;
+  }
+
+  console.log(`[transcribe] ${ip} — ${file.size} bytes, ${file.mimetype}`);
+
+  const apiKey = req.body?.apiKey as string | undefined;
+  if (!apiKey) {
+    res.status(400).json({
+      error: "An OpenAI API key is required for transcription. Add one in Settings.",
+    });
+    return;
+  }
+
+  try {
+    const text = await transcribe(file.buffer, file.mimetype, apiKey);
+    const elapsed = Date.now() - start;
+    console.log(`[transcribe] ${ip} — done in ${elapsed}ms`);
+    res.json({ text });
+  } catch (err) {
+    console.error("[transcribe] error:", err);
+
+    const errAny = err as Record<string, unknown>;
+    const status = typeof errAny.status === "number" ? errAny.status : 500;
+    const message =
+      status === 401
+        ? "Invalid OpenAI API key"
+        : status === 429
+        ? "Rate limit exceeded — try again in a moment"
+        : "Transcription failed";
+
+    res.status(status >= 400 && status < 600 ? status : 502).json({ error: message });
   }
 });
 

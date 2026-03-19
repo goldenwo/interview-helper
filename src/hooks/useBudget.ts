@@ -35,6 +35,11 @@ export function useBudget() {
     }
   }, []);
 
+  const addFixedCost = useCallback((amount: number) => {
+    costRef.current += amount;
+    setCost(costRef.current);
+  }, []);
+
   // Call after streaming ends to ensure the final cost is displayed.
   const flushCost = useCallback(() => {
     pendingOutputTokensRef.current = 0;
@@ -51,5 +56,5 @@ export function useBudget() {
     return model in MODEL_PRICING;
   }, []);
 
-  return { cost, addInputCost, addOutputCost, flushCost, resetBudget, hasPricing };
+  return { cost, addInputCost, addOutputCost, addFixedCost, flushCost, resetBudget, hasPricing };
 }
