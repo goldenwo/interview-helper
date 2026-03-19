@@ -186,6 +186,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     recognition.continuous = !isIOS;
 
     recognition.addEventListener("audiostart", () => {
+      console.log("[recognition] audiostart");
       audioStartedRef.current = true;
       releaseWarmupStream();
     });
@@ -213,11 +214,12 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     };
 
     recognition.onend = () => {
+      console.log("[recognition] onend, isCurrent=", recognitionRef.current === recognition, "wantsListening=", wantsListeningRef.current);
       if (recognitionRef.current !== recognition) return;
 
       // On iOS (non-continuous), auto-restart if user still wants to listen
       if (isIOS && wantsListeningRef.current) {
-        // Restart recognition in one-shot mode for iOS
+        console.log("[recognition] auto-restarting (iOS one-shot)");
         try {
           recognitionRef.current = null;
           startRecognition();
@@ -233,11 +235,13 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.log("[recognition] onerror:", event.error);
       if (event.error === "aborted") { releaseWarmupStream(); return; }
 
       // "no-speech" on iOS just means the one-shot timed out — restart silently
       if (isIOS && event.error === "no-speech" && wantsListeningRef.current) {
-        return; // onend will fire and auto-restart
+        console.log("[recognition] no-speech, will auto-restart via onend");
+        return;
       }
 
       console.error("Speech recognition error:", event.error);
@@ -260,6 +264,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
     try {
       recognition.start();
+      console.log("[recognition] start() called successfully");
       setListening(true);
       setError("");
 
