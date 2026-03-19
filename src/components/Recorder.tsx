@@ -25,6 +25,17 @@ let resetInFlight = false;
 // acquiring the audio session, preventing iOS session conflicts.
 let resetPromise: Promise<void> = Promise.resolve();
 
+// Warmup stream kept alive so the iOS audio session stays in PlayAndRecord
+// mode until SpeechRecognition fires audiostart. Avoids a teardown/rebuild
+// race that leaves the mic indicator on but the recognition receiving silence.
+let warmupStream: MediaStream | null = null;
+function releaseWarmupStream() {
+  if (warmupStream) {
+    warmupStream.getTracks().forEach((t) => t.stop());
+    warmupStream = null;
+  }
+}
+
 // Pre-built silent WAV: 0.1s mono 16-bit PCM at 44100Hz.
 // Reused across all resetIOSAudioSession calls to avoid re-creating the buffer.
 const SILENT_WAV_BLOB = (() => {
@@ -76,15 +87,18 @@ function resetIOSAudioSession(): void {
  */
 async function warmIOSAudioSession(): Promise<void> {
   if (!isIOS) return;
+  releaseWarmupStream();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
-    // Brief pause so iOS can finish handing the audio session to
-    // SpeechRecognition. Without this, recognition.start() can race the
-    // track-stop teardown and iOS refuses to activate the mic.
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    // Acquire mic to force iOS into PlayAndRecord audio session.
+    // Keep the stream alive so the session stays warm — it's released
+    // once SpeechRecognition fires audiostart (or on cleanup).
+    // Previously, stopping the tracks immediately left a ~100ms gap
+    // where the session could tear down before SpeechRecognition
+    // re-acquired it, causing a silent-mic race condition.
+    warmupStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch {
     // Permission denied or unavailable — recognition.start() will surface this
+    warmupStream = null;
   }
 }
 
@@ -122,6 +136,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
         recognitionRef.current = null;
         wantsListeningRef.current = false;
         clearWarmupTimeout();
+        releaseWarmupStream();
         setListening(false);
       }
     }
@@ -134,6 +149,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       }
       wantsListeningRef.current = false;
       clearWarmupTimeout();
+      releaseWarmupStream();
       resetIOSAudioSession();
     };
   }, []);
@@ -152,6 +168,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
     recognition.addEventListener("audiostart", () => {
       audioStartedRef.current = true;
+      releaseWarmupStream();
     });
 
     // Snapshot transcript accumulated from prior iOS one-shot sessions
@@ -192,11 +209,12 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       }
 
       wantsListeningRef.current = false;
+      releaseWarmupStream();
       setListening(false);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === "aborted") return;
+      if (event.error === "aborted") { releaseWarmupStream(); return; }
 
       // "no-speech" on iOS just means the one-shot timed out — restart silently
       if (isIOS && event.error === "no-speech" && wantsListeningRef.current) {
@@ -214,6 +232,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       if (recognitionRef.current === recognition) {
         wantsListeningRef.current = false;
         setListening(false);
+        releaseWarmupStream();
       }
     };
 
@@ -240,11 +259,15 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
             recognitionRef.current = null;
             if (retryCountRef.current < 1) {
               retryCountRef.current++;
+              releaseWarmupStream();
+              // warmIOSAudioSession() is intentionally skipped here — the audio
+              // session was warmed <1.5s ago so it's still in PlayAndRecord mode.
               startRecognition();
             } else {
               retryCountRef.current = 0;
               wantsListeningRef.current = false;
               setListening(false);
+              releaseWarmupStream();
               setError("Microphone failed to activate. Try tapping the mic again.");
             }
           }
@@ -256,12 +279,14 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       recognitionRef.current = null;
       wantsListeningRef.current = false;
       setListening(false);
+      releaseWarmupStream();
     }
   }, []);
 
   function stopListening() {
     wantsListeningRef.current = false;
     clearWarmupTimeout();
+    releaseWarmupStream();
     if (recognitionRef.current) {
       recognitionRef.current.abort();
       recognitionRef.current = null;
