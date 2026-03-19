@@ -88,6 +88,7 @@ function resetIOSAudioSession(): void {
 async function warmIOSAudioSession(): Promise<void> {
   if (!isIOS) return;
   releaseWarmupStream();
+  const gumPromise = navigator.mediaDevices.getUserMedia({ audio: true });
   try {
     // Acquire mic to force iOS into PlayAndRecord audio session.
     // Keep the stream alive so the session stays warm — it's released
@@ -95,9 +96,21 @@ async function warmIOSAudioSession(): Promise<void> {
     // Previously, stopping the tracks immediately left a ~100ms gap
     // where the session could tear down before SpeechRecognition
     // re-acquired it, causing a silent-mic race condition.
-    warmupStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    //
+    // Race against a timeout: iOS can hang on getUserMedia after a
+    // recent audio session reset, permanently blocking toggle().
+    warmupStream = await Promise.race([
+      gumPromise,
+      new Promise<MediaStream>((_, reject) =>
+        setTimeout(() => reject(new Error("getUserMedia timeout")), 3000)
+      ),
+    ]);
   } catch {
-    // Permission denied or unavailable — recognition.start() will surface this
+    // Permission denied, unavailable, or timeout — proceed without warmup.
+    // recognition.start() may still work if the session is alive.
+    // If getUserMedia is still pending (timeout case), stop its tracks
+    // when it eventually resolves so the mic indicator doesn't stay lit.
+    gumPromise.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
     warmupStream = null;
   }
 }
@@ -115,6 +128,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   const warmupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Prevents a second tap from launching a parallel warmup while one is in progress.
   const warmingRef = useRef(false);
+  // Guards against toggle continuing after the component unmounts mid-await.
+  const disposedRef = useRef(false);
 
   const supported = !!SpeechRecognitionCtor;
 
@@ -128,6 +143,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   // Kill stale recognition when page returns from background (iOS kills audio
   // session when backgrounded, so any existing instance is a zombie)
   useEffect(() => {
+    disposedRef.current = false;
+
     function handleVisibilityChange() {
       if (document.visibilityState === "visible" && recognitionRef.current) {
         // Page came back from background — existing recognition is likely dead.
@@ -142,6 +159,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     }
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      disposedRef.current = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (recognitionRef.current) {
         recognitionRef.current.abort();
@@ -319,7 +337,11 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     // ~100ms to switch iOS out of PlayAndRecord mode) races getUserMedia,
     // leaving the audio session in a conflicted state that causes the mute
     // beep and prevents the mic indicator from appearing.
-    await resetPromise;
+    // Race against a 1s timeout so a stuck reset can't block toggle forever.
+    await Promise.race([
+      resetPromise,
+      new Promise<void>((r) => setTimeout(r, 1000)),
+    ]);
 
     warmingRef.current = true;
     try {
@@ -329,6 +351,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     } finally {
       warmingRef.current = false;
     }
+
+    // Component unmounted while getUserMedia was pending — release the
+    // stream that just resolved so the mic indicator doesn't stay lit.
+    if (disposedRef.current) { releaseWarmupStream(); return; }
 
     wantsListeningRef.current = true;
     retryCountRef.current = 0;
