@@ -322,48 +322,43 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   }
 
   const toggle = useCallback(async () => {
+    console.log("[toggle] called, listening=", listening, "warming=", warmingRef.current, "disposed=", disposedRef.current);
+
     if (listening) {
       stopListening();
       return;
     }
 
-    if (!SpeechRecognitionCtor) return;
+    if (!SpeechRecognitionCtor) { console.warn("[toggle] no SpeechRecognition"); return; }
 
-    // Guard against a second tap arriving while warmup is already in progress.
-    // Without this, two concurrent warmups would each create a SpeechRecognition
-    // instance and the second would overwrite recognitionRef before the first starts.
-    if (warmingRef.current) return;
+    if (warmingRef.current) { console.warn("[toggle] blocked by warmingRef"); return; }
 
     // Abort any leftover instance before creating a fresh one
     if (recognitionRef.current) {
+      console.log("[toggle] aborting leftover recognition");
       try { recognitionRef.current.abort(); } catch { /* ignore */ }
       recognitionRef.current = null;
     }
 
-    // Wait for any in-progress audio session reset to finish before
-    // re-acquiring the session. Without this, the reset audio (playing
-    // ~100ms to switch iOS out of PlayAndRecord mode) races getUserMedia,
-    // leaving the audio session in a conflicted state that causes the mute
-    // beep and prevents the mic indicator from appearing.
-    // Race against a 1s timeout so a stuck reset can't block toggle forever.
+    console.log("[toggle] awaiting resetPromise");
     await Promise.race([
       resetPromise,
       new Promise<void>((r) => setTimeout(r, 1000)),
     ]);
+    console.log("[toggle] resetPromise resolved");
 
     warmingRef.current = true;
     try {
-      // On iOS, wake up the audio session before starting recognition.
-      // This forces iOS to properly re-acquire mic access after idle periods.
+      console.log("[toggle] warming audio session");
       await warmIOSAudioSession();
+      console.log("[toggle] warmup done, warmupStream=", !!warmupStream);
     } finally {
       warmingRef.current = false;
     }
 
-    // Component unmounted while getUserMedia was pending — release the
-    // stream that just resolved so the mic indicator doesn't stay lit.
-    if (disposedRef.current) { releaseWarmupStream(); return; }
+    if (disposedRef.current) { console.warn("[toggle] disposed during warmup"); releaseWarmupStream(); return; }
 
+    console.log("[toggle] starting recognition");
     wantsListeningRef.current = true;
     retryCountRef.current = 0;
     transcriptRef.current = "";
