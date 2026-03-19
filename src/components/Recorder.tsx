@@ -195,6 +195,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     const previousTranscript = transcriptRef.current;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      console.log("[recognition] onresult, results=", event.results.length);
       let interim = "";
       let final = "";
       for (let i = 0; i < event.results.length; i++) {
@@ -278,7 +279,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
             !audioStartedRef.current &&
             wantsListeningRef.current
           ) {
-            console.warn("Mic did not activate within 1.5s — retrying");
+            console.warn("[recognition] mic did not activate within 1.5s, retryCount=", retryCountRef.current);
             try { recognition.abort(); } catch { /* ignore */ }
             recognitionRef.current = null;
             if (retryCountRef.current < 1) {
@@ -308,6 +309,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   }, []);
 
   function stopListening() {
+    console.log("[stopListening] called");
     wantsListeningRef.current = false;
     clearWarmupTimeout();
     releaseWarmupStream();
