@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { transcribeAudio } from "../api/transcribe";
 import { serverLog } from "../api/log";
+import { WHISPER_COST_PER_MINUTE } from "../config";
 
 interface Props {
   onQuestion: (question: string) => void;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 const MAX_RECORDING_SECONDS = 60;
+const SILENCE_THRESHOLD = 20; // AnalyserNode byte value (0-255, 128 = silence)
 
 function negotiateMimeType(): string {
   if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
@@ -41,6 +43,9 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
   onCostRef.current = onCost;
   const abortRef = useRef<AbortController | null>(null);
   const recordingStartRef = useRef(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const hadSpeechRef = useRef(false);
+  const levelCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopAndTranscribe = useCallback(async (recorder: MediaRecorder, stream: MediaStream) => {
     if (stoppingRef.current) return;
@@ -54,12 +59,12 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
     // but the final ondataavailable fires asynchronously.
     const blob = await new Promise<Blob>((resolve) => {
       if (recorder.state === "inactive") {
-        const mimeType = recorder.mimeType || negotiateMimeType();
+        const mimeType = recorder.mimeType;
         resolve(new Blob(chunksRef.current, { type: mimeType }));
         return;
       }
       recorder.onstop = () => {
-        const mimeType = recorder.mimeType || negotiateMimeType();
+        const mimeType = recorder.mimeType;
         resolve(new Blob(chunksRef.current, { type: mimeType }));
       };
       recorder.stop();
@@ -71,13 +76,20 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
     // Clean up timers
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (capTimerRef.current) { clearTimeout(capTimerRef.current); capTimerRef.current = null; }
+    if (levelCheckRef.current) { clearInterval(levelCheckRef.current); levelCheckRef.current = null; }
     mediaRecorderRef.current = null;
     streamRef.current = null;
     setRecording(false);
     setElapsed(0);
 
-    if (blob.size === 0) {
-      setError("No audio was recorded. Tap the mic to try again.");
+    // Clean up audio context used for silence detection
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+
+    if (blob.size === 0 || !hadSpeechRef.current) {
+      setError("No speech detected. Tap the mic and try again.");
       stoppingRef.current = false;
       return;
     }
@@ -96,9 +108,7 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
       serverLog("info", `[recorder] Transcription received — ${latency}ms`);
       setTranscript(text);
 
-      // Whisper cost: $0.006/minute
       const minutes = durationSec / 60;
-      const WHISPER_COST_PER_MINUTE = 0.006;
       onCostRef.current?.(minutes * WHISPER_COST_PER_MINUTE);
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -143,6 +153,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
       }
       if (timerRef.current) clearInterval(timerRef.current);
       if (capTimerRef.current) clearTimeout(capTimerRef.current);
+      if (levelCheckRef.current) clearInterval(levelCheckRef.current);
+      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
       if (abortRef.current) abortRef.current.abort();
     };
   }, []);
@@ -165,6 +177,22 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
       return;
     }
 
+    // Set up silence detection via AnalyserNode
+    hadSpeechRef.current = false;
+    const audioCtx = new AudioContext();
+    audioContextRef.current = audioCtx;
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    levelCheckRef.current = setInterval(() => {
+      analyser.getByteFrequencyData(dataArray);
+      const max = dataArray.reduce((a, b) => Math.max(a, b), 0);
+      if (max > SILENCE_THRESHOLD) hadSpeechRef.current = true;
+    }, 200);
+
     const mimeType = negotiateMimeType();
     const recorder = new MediaRecorder(stream, { mimeType });
 
@@ -182,9 +210,8 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming, ap
     serverLog("info", `[recorder] Started — ${mimeType}`);
 
     // Elapsed timer
-    const startTime = Date.now();
     timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+      setElapsed(Math.floor((Date.now() - recordingStartRef.current) / 1000));
     }, 1000);
 
     // 60s safety cap

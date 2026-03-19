@@ -1,5 +1,16 @@
 import OpenAI, { toFile } from "openai";
 
+const clientCache = new Map<string, OpenAI>();
+
+function getClient(apiKey: string): OpenAI {
+  let client = clientCache.get(apiKey);
+  if (!client) {
+    client = new OpenAI({ apiKey });
+    clientCache.set(apiKey, client);
+  }
+  return client;
+}
+
 const MIME_TO_EXT: Record<string, string> = {
   "audio/webm": "webm",
   "audio/mp4": "mp4",
@@ -19,7 +30,7 @@ export async function transcribe(
   console.log(`[whisper] Request received — ${audioBuffer.byteLength} bytes, ${mimeType}`);
   const start = Date.now();
 
-  const client = new OpenAI({ apiKey });
+  const client = getClient(apiKey);
 
   const file = await toFile(audioBuffer, fileName, { type: mimeType });
 

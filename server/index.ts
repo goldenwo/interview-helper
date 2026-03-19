@@ -32,11 +32,14 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+const isDev = process.env.NODE_ENV !== "production";
+
 app.use(
   "/api/",
   rateLimit({
     windowMs: 60_000,
     max: 10,
+    skip: isDev ? () => true : () => false,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests, please wait a moment" },
@@ -88,6 +91,26 @@ setInterval(() => {
     if (now >= entry.resetAt) tokenUsage.delete(ip);
   }
 }, 3_600_000).unref();
+
+// --- Shared error helpers ---
+
+function resolveApiError(err: unknown): { status: number; message: string } {
+  const errAny = err as Record<string, unknown>;
+  const status =
+    typeof errAny.status === "number" ? errAny.status :
+    typeof errAny.statusCode === "number" ? errAny.statusCode :
+    typeof errAny.httpErrorCode === "number" ? errAny.httpErrorCode :
+    500;
+  const message =
+    status === 401
+      ? "Invalid API key"
+      : status === 429
+      ? "Rate limit or quota exceeded — check your API key billing"
+      : err instanceof Error
+      ? err.message
+      : "Request failed";
+  return { status: status >= 400 && status < 600 ? status : 502, message };
+}
 
 // --- Provider adapters ---
 
@@ -217,10 +240,10 @@ app.post("/api/transcribe", (req, res, next) => {
 
   console.log(`[transcribe] ${ip} — ${file.size} bytes, ${file.mimetype}`);
 
-  const apiKey = req.body?.apiKey as string | undefined;
+  const apiKey = (req.body?.apiKey as string | undefined) || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     res.status(400).json({
-      error: "An OpenAI API key is required for transcription. Add one in Settings.",
+      error: "An OpenAI API key is required for transcription. Add one in Settings or set OPENAI_API_KEY in .env",
     });
     return;
   }
@@ -232,17 +255,8 @@ app.post("/api/transcribe", (req, res, next) => {
     res.json({ text });
   } catch (err) {
     console.error("[transcribe] error:", err);
-
-    const errAny = err as Record<string, unknown>;
-    const status = typeof errAny.status === "number" ? errAny.status : 500;
-    const message =
-      status === 401
-        ? "Invalid OpenAI API key"
-        : status === 429
-        ? "Rate limit exceeded — try again in a moment"
-        : "Transcription failed";
-
-    res.status(status >= 400 && status < 600 ? status : 502).json({ error: message });
+    const { status, message } = resolveApiError(err);
+    res.status(status).json({ error: message });
   }
 });
 
@@ -359,24 +373,10 @@ app.post("/api/answer", async (req, res) => {
     if (abortController.signal.aborted) return;
     console.error(`${resolvedProvider} error:`, err);
 
-    // Different provider SDKs expose the HTTP status under different property names.
-    const errAny = err as Record<string, unknown>;
-    const status =
-      typeof errAny.status === "number" ? errAny.status :
-      typeof errAny.statusCode === "number" ? errAny.statusCode :
-      typeof errAny.httpErrorCode === "number" ? errAny.httpErrorCode :
-      undefined;
-    const message =
-      status === 429
-        ? "Rate limit or quota exceeded — check your API key billing"
-        : status === 401
-        ? `Invalid ${resolvedProvider} API key`
-        : err instanceof Error
-        ? err.message
-        : "Failed to get answer";
+    const { status, message } = resolveApiError(err);
 
     if (!res.headersSent) {
-      res.status(status === 429 || status === 401 ? status : 502).json({ error: message });
+      res.status(status).json({ error: message });
     } else {
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
       res.end();
