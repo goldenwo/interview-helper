@@ -186,7 +186,6 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     recognition.continuous = !isIOS;
 
     recognition.addEventListener("audiostart", () => {
-      console.log("[recognition] audiostart");
       audioStartedRef.current = true;
       releaseWarmupStream();
     });
@@ -195,7 +194,6 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     const previousTranscript = transcriptRef.current;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      console.log("[recognition] onresult, results=", event.results.length);
       let interim = "";
       let final = "";
       for (let i = 0; i < event.results.length; i++) {
@@ -215,12 +213,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     };
 
     recognition.onend = () => {
-      console.log("[recognition] onend, isCurrent=", recognitionRef.current === recognition, "wantsListening=", wantsListeningRef.current);
       if (recognitionRef.current !== recognition) return;
 
       // On iOS (non-continuous), auto-restart if user still wants to listen
       if (isIOS && wantsListeningRef.current) {
-        console.log("[recognition] auto-restarting (iOS one-shot)");
         try {
           recognitionRef.current = null;
           startRecognition();
@@ -236,14 +232,10 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.log("[recognition] onerror:", event.error);
       if (event.error === "aborted") { releaseWarmupStream(); return; }
 
       // "no-speech" on iOS just means the one-shot timed out — restart silently
-      if (isIOS && event.error === "no-speech" && wantsListeningRef.current) {
-        console.log("[recognition] no-speech, will auto-restart via onend");
-        return;
-      }
+      if (isIOS && event.error === "no-speech" && wantsListeningRef.current) return;
 
       console.error("Speech recognition error:", event.error);
       const messages: Record<string, string> = {
@@ -265,7 +257,6 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
 
     try {
       recognition.start();
-      console.log("[recognition] start() called successfully");
       setListening(true);
       setError("");
 
@@ -279,7 +270,6 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
             !audioStartedRef.current &&
             wantsListeningRef.current
           ) {
-            console.warn("[recognition] mic did not activate within 1.5s, retryCount=", retryCountRef.current);
             try { recognition.abort(); } catch { /* ignore */ }
             recognitionRef.current = null;
             if (retryCountRef.current < 1) {
@@ -309,7 +299,6 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   }, []);
 
   function stopListening() {
-    console.log("[stopListening] called");
     wantsListeningRef.current = false;
     clearWarmupTimeout();
     releaseWarmupStream();
@@ -324,43 +313,34 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
   }
 
   const toggle = useCallback(async () => {
-    console.log("[toggle] called, listening=", listening, "warming=", warmingRef.current, "disposed=", disposedRef.current);
-
     if (listening) {
       stopListening();
       return;
     }
 
-    if (!SpeechRecognitionCtor) { console.warn("[toggle] no SpeechRecognition"); return; }
-
-    if (warmingRef.current) { console.warn("[toggle] blocked by warmingRef"); return; }
+    if (!SpeechRecognitionCtor) return;
+    if (warmingRef.current) return;
 
     // Abort any leftover instance before creating a fresh one
     if (recognitionRef.current) {
-      console.log("[toggle] aborting leftover recognition");
       try { recognitionRef.current.abort(); } catch { /* ignore */ }
       recognitionRef.current = null;
     }
 
-    console.log("[toggle] awaiting resetPromise");
     await Promise.race([
       resetPromise,
       new Promise<void>((r) => setTimeout(r, 1000)),
     ]);
-    console.log("[toggle] resetPromise resolved");
 
     warmingRef.current = true;
     try {
-      console.log("[toggle] warming audio session");
       await warmIOSAudioSession();
-      console.log("[toggle] warmup done, warmupStream=", !!warmupStream);
     } finally {
       warmingRef.current = false;
     }
 
-    if (disposedRef.current) { console.warn("[toggle] disposed during warmup"); releaseWarmupStream(); return; }
+    if (disposedRef.current) { releaseWarmupStream(); return; }
 
-    console.log("[toggle] starting recognition");
     wantsListeningRef.current = true;
     retryCountRef.current = 0;
     transcriptRef.current = "";
