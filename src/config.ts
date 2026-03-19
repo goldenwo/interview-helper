@@ -20,6 +20,8 @@ export const DEFAULT_MODEL = "gpt-4o-mini";
 export const MAX_CONTEXT_LENGTH = 10_000;
 export const MAX_FILE_SIZE = 1_000_000; // 1MB
 
+export const WHISPER_COST_PER_MINUTE = 0.006;
+
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "gpt-4o": { input: 0.0025, output: 0.01 },
   "gpt-4o-mini": { input: 0.00015, output: 0.0006 },

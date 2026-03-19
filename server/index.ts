@@ -2,12 +2,14 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import multer from "multer";
 import { fileURLToPath } from "url";
 import path from "path";
 import type { AnswerRequest, Provider, ProviderAdapter } from "./types.js";
 import { openaiAdapter } from "./adapters/openai.js";
 import { anthropicAdapter } from "./adapters/anthropic.js";
 import { googleAdapter } from "./adapters/google.js";
+import { transcribe } from "./adapters/whisper.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
@@ -30,11 +32,14 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+const isDev = process.env.NODE_ENV !== "production";
+
 app.use(
   "/api/",
   rateLimit({
     windowMs: 60_000,
-    max: 10,
+    max: 20,
+    skip: isDev ? () => true : () => false,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests, please wait a moment" },
@@ -87,6 +92,26 @@ setInterval(() => {
   }
 }, 3_600_000).unref();
 
+// --- Shared error helpers ---
+
+function resolveApiError(err: unknown): { status: number; message: string } {
+  const errAny = err as Record<string, unknown>;
+  const status =
+    typeof errAny.status === "number" ? errAny.status :
+    typeof errAny.statusCode === "number" ? errAny.statusCode :
+    typeof errAny.httpErrorCode === "number" ? errAny.httpErrorCode :
+    500;
+  const message =
+    status === 401
+      ? "Invalid API key"
+      : status === 429
+      ? "Rate limit or quota exceeded — check your API key billing"
+      : err instanceof Error
+      ? err.message
+      : "Request failed";
+  return { status: status >= 400 && status < 600 ? status : 502, message };
+}
+
 // --- Provider adapters ---
 
 const adapters: Record<Provider, ProviderAdapter> = {
@@ -136,12 +161,13 @@ function buildSystemPrompt(resume?: string, jobDescription?: string): string {
 
 app.post("/api/log", (req, res) => {
   const { level, message, detail } = req.body ?? {};
-  const safeLevel = level === "warn" ? "warn" : "error";
+  const safeLevel = level === "warn" ? "warn" : level === "info" ? "info" : "error";
   const safeMsg = String(message ?? "unknown").slice(0, 500).replace(/[\x00-\x1f]/g, "");
   const safeDtl = detail ? String(detail).slice(0, 500).replace(/[\x00-\x1f]/g, "") : "";
   const ua = req.headers["user-agent"] ?? "unknown-ua";
   const entry = `[client:${safeLevel}] ${safeMsg}${safeDtl ? " | " + safeDtl : ""} [ua: ${ua}]`;
-  if (safeLevel === "warn") console.warn(entry);
+  if (safeLevel === "info") console.log(entry);
+  else if (safeLevel === "warn") console.warn(entry);
   else console.error(entry);
   res.status(204).end();
 });
@@ -178,6 +204,59 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
   } catch (err) {
     console.error("PDF extraction error:", err);
     res.status(500).json({ error: "Failed to extract text from PDF" });
+  }
+});
+
+// --- Whisper transcription ---
+
+const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB cap
+
+app.post("/api/transcribe", (req, res, next) => {
+  upload.single("audio")(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+        res.status(413).json({ error: "Audio file too large (max 5MB)" });
+        return;
+      }
+      res.status(400).json({ error: "File upload error" });
+      return;
+    }
+    next();
+  });
+}, async (req, res) => {
+  const start = Date.now();
+  const ip = req.ip ?? "unknown";
+  const file = req.file;
+
+  if (!file) {
+    res.status(400).json({ error: "No audio file uploaded" });
+    return;
+  }
+
+  if (!file.mimetype.startsWith("audio/")) {
+    res.status(400).json({ error: `Invalid MIME type: ${file.mimetype}` });
+    return;
+  }
+
+  console.log(`[transcribe] ${ip} — ${file.size} bytes, ${file.mimetype}`);
+
+  const apiKey = (req.body?.apiKey as string | undefined) || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    res.status(400).json({
+      error: "An OpenAI API key is required for transcription. Add one in Settings or set OPENAI_API_KEY in .env",
+    });
+    return;
+  }
+
+  try {
+    const text = await transcribe(file.buffer, file.mimetype, apiKey);
+    const elapsed = Date.now() - start;
+    console.log(`[transcribe] ${ip} — done in ${elapsed}ms`);
+    res.json({ text });
+  } catch (err) {
+    console.error("[transcribe] error:", err);
+    const { status, message } = resolveApiError(err);
+    res.status(status).json({ error: message });
   }
 });
 
@@ -294,24 +373,10 @@ app.post("/api/answer", async (req, res) => {
     if (abortController.signal.aborted) return;
     console.error(`${resolvedProvider} error:`, err);
 
-    // Different provider SDKs expose the HTTP status under different property names.
-    const errAny = err as Record<string, unknown>;
-    const status =
-      typeof errAny.status === "number" ? errAny.status :
-      typeof errAny.statusCode === "number" ? errAny.statusCode :
-      typeof errAny.httpErrorCode === "number" ? errAny.httpErrorCode :
-      undefined;
-    const message =
-      status === 429
-        ? "Rate limit or quota exceeded — check your API key billing"
-        : status === 401
-        ? `Invalid ${resolvedProvider} API key`
-        : err instanceof Error
-        ? err.message
-        : "Failed to get answer";
+    const { status, message } = resolveApiError(err);
 
     if (!res.headersSent) {
-      res.status(status === 429 || status === 401 ? status : 502).json({ error: message });
+      res.status(status).json({ error: message });
     } else {
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
       res.end();

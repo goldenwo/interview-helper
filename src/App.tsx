@@ -28,7 +28,7 @@ export default function App() {
 	const [showRetry, setShowRetry] = useState(false);
 	const [lastQuestion, setLastQuestion] = useState("");
 	const [interruptedAnswer, setInterruptedAnswer] = useState("");
-	const { cost, addInputCost, addOutputCost, flushCost, resetBudget, hasPricing } =
+	const { cost, addInputCost, addOutputCost, addFixedCost, flushCost, resetBudget, hasPricing } =
 		useBudget();
 	const { healthy } = useHealth();
 	const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -433,6 +433,8 @@ export default function App() {
 						onCancel={handleCancel}
 						disabled={loading}
 						streaming={streaming || loading}
+						apiKey={settings.apiKeys.openai}
+						onCost={addFixedCost}
 					/>
 				</footer>
 			</div>
