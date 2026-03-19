@@ -25,9 +25,6 @@ let resetInFlight = false;
 // acquiring the audio session, preventing iOS session conflicts.
 let resetPromise: Promise<void> = Promise.resolve();
 
-// Timestamp of the last recording end — used to skip the getUserMedia warmup
-// for back-to-back recordings where the audio session is still active.
-let lastSessionEndMs = 0;
 
 // Warmup stream kept alive so the iOS audio session stays in PlayAndRecord
 // mode until SpeechRecognition fires audiostart. Avoids a teardown/rebuild
@@ -91,9 +88,6 @@ function resetIOSAudioSession(): void {
  */
 async function warmIOSAudioSession(): Promise<void> {
   if (!isIOS) return;
-  // Skip warmup for back-to-back recordings — the audio session is still
-  // in PlayAndRecord mode and getUserMedia can conflict with the transition.
-  if (Date.now() - lastSessionEndMs < 5000) return;
   releaseWarmupStream();
   const gumPromise = navigator.mediaDevices.getUserMedia({ audio: true });
   try {
@@ -317,7 +311,6 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       recognitionRef.current = null;
     }
     resetIOSAudioSession();
-    lastSessionEndMs = Date.now();
     setListening(false);
   }
 
