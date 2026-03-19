@@ -317,7 +317,9 @@ export default function Recorder({ onQuestion, onCancel, disabled, streaming }: 
       recognitionRef.current.abort();
       recognitionRef.current = null;
     }
-    resetIOSAudioSession();
+    // resetIOSAudioSession() deliberately removed — the repeated reset/warm
+    // cycle degrades iOS audio routing, causing silent-mic after a few recordings.
+    // Downside: volume buttons may show call-volume HUD while the page is open.
     setListening(false);
   }
 
