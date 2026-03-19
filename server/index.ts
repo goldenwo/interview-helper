@@ -10,6 +10,8 @@ import { openaiAdapter } from "./adapters/openai.js";
 import { anthropicAdapter } from "./adapters/anthropic.js";
 import { googleAdapter } from "./adapters/google.js";
 import { transcribe } from "./adapters/whisper.js";
+// Lazily loaded on first PDF request so startup is not blocked by this import.
+let unpdfMod: typeof import("unpdf") | null = null;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
@@ -176,9 +178,6 @@ app.post("/api/log", (req, res) => {
 
 const MAX_PDF_SIZE = 1_000_000; // 1MB
 
-// Lazily loaded on first PDF request so startup is not blocked by this import.
-let pdfjsLib: typeof import("pdfjs-dist/legacy/build/pdf.mjs") | null = null;
-
 app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb" }), async (req, res) => {
   if (!req.body?.length) {
     res.status(400).json({ error: "No PDF data received" });
@@ -188,22 +187,18 @@ app.post("/api/extract-pdf", express.raw({ type: "application/pdf", limit: "1mb"
     res.status(400).json({ error: "File must be under 1MB" });
     return;
   }
+  let pdf;
   try {
-    if (!pdfjsLib) pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const data = new Uint8Array(req.body).buffer;
-    const pdf = await pdfjsLib.getDocument({ data }).promise;
-    const pages = await Promise.all(
-      Array.from({ length: pdf.numPages }, async (_, i) => {
-        const page = await pdf.getPage(i + 1);
-        const content = await page.getTextContent();
-        return content.items.map((item: Record<string, unknown>) => (typeof item.str === "string" ? item.str : "")).join(" ");
-      })
-    );
+    if (!unpdfMod) unpdfMod = await import("unpdf");
+    pdf = await unpdfMod.getDocumentProxy(new Uint8Array(req.body));
+    const { text: pages } = await unpdfMod.extractText(pdf);
     const text = pages.join("\n\n");
     res.json({ text });
   } catch (err) {
     console.error("PDF extraction error:", err);
     res.status(500).json({ error: "Failed to extract text from PDF" });
+  } finally {
+    await pdf?.destroy();
   }
 });
 
